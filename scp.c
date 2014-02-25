@@ -232,6 +232,7 @@
 #include <fcntl.h>
 #else
 #include <unistd.h>
+#include <libgen.h>
 #endif
 #include <sys/stat.h>
 #include <setjmp.h>
@@ -1667,9 +1668,16 @@ if (*cbuf)                                              /* cmd file arg? */
 else if (*argv[0]) {                                    /* sim name arg? */
     char *np;                                           /* "path.ini" */
     nbuf[0] = '"';                                      /* starting " */
+#ifdef _WIN32
     strncpy (nbuf + 1, argv[0], PATH_MAX + 1);          /* copy sim name */
     if ((np = match_ext (nbuf, "EXE")))                 /* remove .exe */
         *np = 0;
+#else
+	nbuf[1] = 0;										/* Truncate nbuf */
+	char *bn;                                       	/* Basename of executable */
+	bn = basename(argv[0]);								/* Strip path... */
+	strncat(nbuf,bn,PATH_MAX+1);						/* Concatenate to nbuf */
+#endif
     strcat (nbuf, ".ini\"");                            /* add .ini" */
     stat = do_cmd (-1, nbuf) & ~SCPE_NOMESSAGE;         /* proc default cmd file */
     if (stat == SCPE_OPENERR) {                         /* didn't exist/can't open? */
