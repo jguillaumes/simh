@@ -2024,7 +2024,7 @@ if (lp->serport) {                          /* close current serial connection *
     lp->destination = NULL;
     }
 tmxr_set_line_loopback (lp, FALSE);
-if ((lp->mp->uptr) && ((lp->uptr == NULL) || (lp->uptr == lp->mp->uptr))) {
+if ((lp->mp) && (lp->mp->uptr) && ((lp->uptr == NULL) || (lp->uptr == lp->mp->uptr))) {
     /* Revise the unit's connect string to reflect the current attachments */
     lp->mp->uptr->filename = tmxr_mux_attach_string (lp->mp->uptr->filename, lp->mp);
     /* No connections or listeners exist, then we're equivalent to being fully detached.  We should reflect that */
@@ -2265,32 +2265,26 @@ while (*tptr) {
                     }
                 }
             }
-        if (unbuffered) {
-            if (mp->buffered) {
-                mp->buffered = 0;
-                for (i = 0; i < mp->lines; i++) { /* default line buffers */
-                    lp = mp->ldsc + i;
-                    lp->rxbsz = TMXR_MAXBUF;
-                    lp->rxb = (char *)realloc(lp->rxb, lp->rxbsz);
-                    lp->rbr = (char *)realloc(lp->rbr, lp->rxbsz);
-                    lp->txbsz = TMXR_MAXBUF;
-                    lp->txb = (char *)realloc(lp->txb, lp->txbsz);
-                    lp->txbfd = lp->txbpi = lp->txbpr = 0;
-                    }
-                }
-            }
-        if (buffered[0]) {
+        if ((unbuffered) && (mp->buffered))
+            mp->buffered = 0;
+        if (buffered[0])
             mp->buffered = atoi(buffered);
-            for (i = 0; i < mp->lines; i++) { /* initialize line buffers */
-                lp = mp->ldsc + i;
+        for (i = 0; i < mp->lines; i++) { /* initialize line buffers */
+            lp = mp->ldsc + i;
+            if (mp->buffered) {
                 lp->txbsz = mp->buffered;
                 lp->txbfd = 1;
-                lp->txb = (char *)realloc(lp->txb, lp->txbsz);
-                lp->txbpi = lp->txbpr = 0;
                 lp->rxbsz = mp->buffered;
-                lp->rxb = (char *)realloc(lp->rxb, lp->rxbsz);
-                lp->rbr = (char *)realloc(lp->rbr, lp->rxbsz);
                 }
+            else {
+                lp->txbsz = TMXR_MAXBUF;
+                lp->txbfd = 0;
+                lp->rxbsz = TMXR_MAXBUF;
+                }
+            lp->txbpi = lp->txbpr = 0;
+            lp->txb = (char *)realloc(lp->txb, lp->txbsz);
+            lp->rxb = (char *)realloc(lp->rxb, lp->rxbsz);
+            lp->rbr = (char *)realloc(lp->rbr, lp->rxbsz);
             }
         if (nolog) {
             mp->logfiletmpl[0] = '\0';
@@ -2316,9 +2310,7 @@ while (*tptr) {
                 free (mp->port);
                 mp->port = NULL;
                 }
-            printf ("Listening on port %s\n", listen);
-            if (sim_log)
-                fprintf (sim_log, "Listening on port %s\n", listen);
+            sim_printf ("Listening on port %s\n", listen);
             mp->port = (char *)realloc (mp->port, 1 + strlen (listen));
             strcpy (mp->port, listen);                      /* save port */
             mp->master = sock;                              /* save master socket */
@@ -2343,9 +2335,7 @@ while (*tptr) {
         if (loopback) {
             if (mp->lines > 1)
                 return SCPE_ARG;                            /* ambiguous */
-            printf ("Operating in loopback mode\n");
-            if (sim_log)
-                fprintf (sim_log, "Operating in loopback mode\n");
+            sim_printf ("Operating in loopback mode\n");
             for (i = 0; i < mp->lines; i++) {
                 lp = mp->ldsc + i;
                 tmxr_set_line_loopback (lp, loopback);
@@ -2429,23 +2419,18 @@ while (*tptr) {
                 return r;
                 }
             }
-        if (unbuffered) {
-            lp->txbsz = TMXR_MAXBUF;
-            lp->txb = (char *)realloc (lp->txb, lp->txbsz);
-            lp->txbfd = lp->txbpi = lp->txbpr = 0;
-            lp->rxbsz = lp->txbsz;
-            lp->rxb = (char *)realloc(lp->rxb, lp->rxbsz);
-            lp->rbr = (char *)realloc(lp->rbr, lp->rxbsz);
+        if ((unbuffered) || (buffered[0] == '\0')) {
+            lp->rxbsz = lp->txbsz = TMXR_MAXBUF;
+            lp->txbfd = 0;
             }
-        if (buffered[0]) {
-            lp->txbsz = atoi(buffered);
+        else {
+            lp->rxbsz = lp->txbsz = atoi(buffered);
             lp->txbfd = 1;
-            lp->txb = (char *)realloc (lp->txb, lp->txbsz);
-            lp->txbpi = lp->txbpr = 0;
-            lp->rxbsz = lp->txbsz;
-            lp->rxb = (char *)realloc(lp->rxb, lp->rxbsz);
-            lp->rbr = (char *)realloc(lp->rbr, lp->rxbsz);
             }
+        lp->txbpi = lp->txbpr = 0;
+        lp->txb = (char *)realloc (lp->txb, lp->txbsz);
+        lp->rxb = (char *)realloc(lp->rxb, lp->rxbsz);
+        lp->rbr = (char *)realloc(lp->rbr, lp->rxbsz);
         if (nolog) {
             free(lp->txlogname);
             lp->txlogname = NULL;
@@ -2463,9 +2448,7 @@ while (*tptr) {
             if (sock == INVALID_SOCKET)                     /* open error */
                 return SCPE_OPENERR;
             _mux_detach_line (lp, TRUE, FALSE);
-            printf ("Line %d Listening on port %s\n", line, listen);
-            if (sim_log)
-                fprintf (sim_log, "Line %d Listening on port %s\n", line, listen);
+            sim_printf ("Line %d Listening on port %s\n", line, listen);
             lp->port = (char *)realloc (lp->port, 1 + strlen (listen));
             strcpy (lp->port, listen);                       /* save port */
             lp->master = sock;                              /* save master socket */
@@ -2524,9 +2507,7 @@ while (*tptr) {
             }
         if (loopback) {
             tmxr_set_line_loopback (lp, loopback);
-            printf ("Line %d operating in loopback mode\n", line);
-            if (sim_log)
-                fprintf (sim_log, "Line %d operating in loopback mode\n", line);
+            sim_printf ("Line %d operating in loopback mode\n", line);
             }
         lp->modem_control = modem_control;
         r = SCPE_OK;
@@ -2805,7 +2786,7 @@ while (sim_asynch_enabled) {
             wait_count = 0;
             if (select_errno == EINTR)
                 break;
-            fprintf (stderr, "select() returned -1, errno=%d - %s\r\n", select_errno, strerror(select_errno));
+            sim_printf ("select() returned -1, errno=%d - %s\r\n", select_errno, strerror(select_errno));
             abort();
             break;
         default:
@@ -2926,7 +2907,7 @@ while (sim_asynch_enabled) {
     pthread_mutex_lock (&sim_tmxr_poll_lock);
     switch (status) {
         case WAIT_FAILED:
-            fprintf (stderr, "WaitForMultipleObjects() Failed, LastError=%d\r\n", GetLastError());
+            sim_printf ("WaitForMultipleObjects() Failed, LastError=%d\r\n", GetLastError());
             abort();
             break;
         case WAIT_TIMEOUT:
@@ -3041,7 +3022,7 @@ while (sim_asynch_enabled) {
                        IO$_READLBLK | IO$M_NOECHO | IO$M_NOFILTR | IO$M_TIMED | IO$M_TRMNOECHO,
                        &iosb, 0, 0, buf, 1, 1, term, 0, 0);
     if (status != SS$_NORMAL) {
-        fprintf (stderr, "_tmxr_serial_line_poll() - QIO Failed, Status=%d\r\n", status);
+        sim_printf ("_tmxr_serial_line_poll() - QIO Failed, Status=%d\r\n", status);
         abort();
         }
     wait_count = 0;
@@ -3395,6 +3376,7 @@ for (i = 0; i < mp->lines; i++) {  /* loop thru conn */
         free (lp->port);
         lp->port = NULL;
         }
+    lp->txbfd = 0;
     free (lp->txb);
     lp->txb = NULL;
     free (lp->rxb);

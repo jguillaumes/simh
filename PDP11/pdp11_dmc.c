@@ -1514,7 +1514,7 @@ controller->control_out_operations_completed = 0;
 controller->ddcmp_control_packets_received = 0;
 controller->ddcmp_control_packets_sent = 0;
 
-printf("Statistics reset\n" );
+sim_printf("Statistics reset\n");
 
 return SCPE_OK;
 }
@@ -2568,6 +2568,15 @@ if (!buffer) {
         dmc_showstats (sim_log, controller->unit, 0, NULL);
         dmc_showddcmp (sim_log, controller->unit, 0, NULL);
         fflush (sim_log);
+        }
+    if (sim_deb) {
+        fprintf (sim_deb, "DDCMP Buffer allocation failure.\n");
+        fprintf (sim_deb, "This is a fatal error which should never happen.\n");
+        fprintf (sim_deb, "Please submit this output when you report this bug.\n");
+        dmc_showqueues (sim_deb, controller->unit, 0, NULL);
+        dmc_showstats (sim_deb, controller->unit, 0, NULL);
+        dmc_showddcmp (sim_deb, controller->unit, 0, NULL);
+        fflush (sim_deb);
         }
     return buffer;
     }
@@ -3676,6 +3685,8 @@ if (0 == dmc_units[0].flags) {       /* First Time Initializations */
 ans = auto_config (dptr->name, (dptr->flags & DEV_DIS) ? 0 : dptr->numunits - 2);
 
 if (!(dptr->flags & DEV_DIS)) {
+    int32 attached = 0;
+
     for (i = 0; i < DMC_NUMDEVICE + DMP_NUMDEVICE; i++) {
         if (dmc_ctrls[i].device == dptr) {
             BUFFER *buffer;
@@ -3709,11 +3720,16 @@ if (!(dptr->flags & DEV_DIS)) {
             dmc_buffer_queue_init_all(controller);
             dmc_clrinint(controller);
             dmc_clroutint(controller);
-            for (j=0; j<dptr->numunits-1; j++)
+            for (j=0; j<dptr->numunits-1; j++) {
                 sim_cancel (&dptr->units[j]); /* stop poll */
+                if (dptr->units[j].flags & UNIT_ATT)
+                    ++attached;
+                }
             dmc_process_master_clear(controller);
             }
         }
+    if (attached)
+        sim_activate_after (dptr->units+(dptr->numunits-2), DMC_CONNECT_POLL*1000000);/* start poll */
     }
 
 return ans;
@@ -3734,9 +3750,7 @@ if (!cptr || !*cptr)
 if (!(uptr->flags & UNIT_ATTABLE))
     return SCPE_NOATT;
 if (!peer[0]) {
-    printf ("Peer must be specified before attach\n");
-    if (sim_log)
-        fprintf (sim_log, "Peer must be specified before attach\n");
+    sim_printf ("Peer must be specified before attach\n");
     return SCPE_ARG;
     }
 sprintf (attach_string, "Line=%d,Connect=%s,%s", dmc, peer, cptr);
@@ -3747,7 +3761,7 @@ strncpy (port, cptr, CBUFSIZE-1);
 uptr->filename = (char *)malloc (strlen(port)+1);
 strcpy (uptr->filename, port);
 uptr->flags |= UNIT_ATT;
-sim_activate_after (dptr->units+mp->lines, DMC_CONNECT_POLL*1000000);/* start poll */
+sim_activate_after (dptr->units+(dptr->numunits-2), DMC_CONNECT_POLL*1000000);/* start poll */
 return ans;
 }
 
