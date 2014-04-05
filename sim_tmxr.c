@@ -826,8 +826,6 @@ if (tptr == NULL)                                       /* no more mem? */
 
 if (mp->port)                                           /* copy port */
     sprintf (growstring(&tptr, 13 + strlen (mp->port)), "%s%s", mp->port, mp->notelnet ? ";notelnet" : "");
-if (mp->buffered)
-    sprintf (growstring(&tptr, 32), ",Buffered=%d", mp->buffered);
 if (mp->logfiletmpl[0])                                 /* logfile info */
     sprintf (growstring(&tptr, 7 + strlen (mp->logfiletmpl)), ",Log=%s", mp->logfiletmpl);
 while ((*tptr == ',') || (*tptr == ' '))
@@ -1377,12 +1375,12 @@ if ((lp->sock) || (lp->serport) || (lp->loopback)) {
 else
     if ((lp->master) || (lp->mp && lp->mp->master) ||
         (lp->port && lp->destination))
-        incoming_state = TMXR_MDM_DCD | TMXR_MDM_DSR;
+        incoming_state = TMXR_MDM_DSR;
     else
         incoming_state = 0;
 lp->modembits |= incoming_state;
 dptr = (lp->dptr ? lp->dptr : (lp->mp ? lp->mp->dptr : NULL));
-if (sim_deb && lp->mp && dptr) {
+if ((lp->modembits != before_modem_bits) && (sim_deb && lp->mp && dptr)) {
     sim_debug_bits (TMXR_DBG_MDM, dptr, tmxr_modem_bits, before_modem_bits, lp->modembits, FALSE);
     sim_debug (TMXR_DBG_MDM, dptr, " - Line %d - %p\n", (int)(lp-lp->mp->ldsc), lp->txb);
     }
@@ -2024,19 +2022,27 @@ if (lp->serport) {                          /* close current serial connection *
     lp->destination = NULL;
     }
 tmxr_set_line_loopback (lp, FALSE);
-if ((lp->mp) && (lp->mp->uptr) && ((lp->uptr == NULL) || (lp->uptr == lp->mp->uptr))) {
-    /* Revise the unit's connect string to reflect the current attachments */
-    lp->mp->uptr->filename = tmxr_mux_attach_string (lp->mp->uptr->filename, lp->mp);
-    /* No connections or listeners exist, then we're equivalent to being fully detached.  We should reflect that */
-    if (lp->mp->uptr->filename == NULL)
-        tmxr_detach (lp->mp, lp->mp->uptr);
-    }
 }
 
 t_stat tmxr_detach_ln (TMLN *lp)
 {
-tmxr_debug_trace_line (lp, "tmxr_detaach_ln()");
+UNIT *uptr = NULL;
+
+tmxr_debug_trace_line (lp, "tmxr_detach_ln()");
 _mux_detach_line (lp, TRUE, TRUE);
+if (lp->mp)
+    if (lp->uptr)
+        uptr = lp->uptr;
+    else
+        if (lp->mp->uptr)
+            uptr = lp->mp->uptr;
+if (uptr) {
+    /* Revise the unit's connect string to reflect the current attachments */
+    uptr->filename = tmxr_mux_attach_string (uptr->filename, lp->mp);
+    /* No connections or listeners exist, then we're equivalent to being fully detached.  We should reflect that */
+    if (uptr->filename == NULL)
+        tmxr_detach (lp->mp, uptr);
+    }
 return SCPE_OK;
 }
 
@@ -2061,7 +2067,7 @@ char tbuf[CBUFSIZE], listen[CBUFSIZE], destination[CBUFSIZE],
 SOCKET sock;
 SERHANDLE serport;
 char *tptr = cptr;
-t_bool nolog, notelnet, listennotelnet, unbuffered, modem_control, loopback, datagram, packet;
+t_bool nolog, notelnet, listennotelnet, modem_control, loopback, datagram, packet;
 TMLN *lp;
 t_stat r = SCPE_ARG;
 
@@ -2079,9 +2085,11 @@ while (*tptr) {
     memset(buffered,    '\0', sizeof(buffered));
     memset(port,        '\0', sizeof(port));
     memset(option,      '\0', sizeof(option));
-    nolog = notelnet = listennotelnet = unbuffered = loopback = FALSE;
+    nolog = notelnet = listennotelnet = loopback = FALSE;
     datagram = mp->datagram;
     packet = mp->packet;
+    if (mp->buffered)
+        sprintf(buffered, "%d", mp->buffered);
     if (line != -1)
         notelnet = listennotelnet = mp->notelnet;
     modem_control = mp->modem_control;
@@ -2119,7 +2127,7 @@ while (*tptr) {
                 (0 == MATCH_CMD (gbuf, "UNBUFFERED"))) {
                 if ((NULL != cptr) && ('\0' != *cptr))
                     return SCPE_2MARG;
-                unbuffered = TRUE;
+                buffered[0] = '\0';
                 continue;
                 }
             if (0 == MATCH_CMD (gbuf, "BUFFERED")) {
@@ -2265,16 +2273,12 @@ while (*tptr) {
                     }
                 }
             }
-        if ((unbuffered) && (mp->buffered))
-            mp->buffered = 0;
-        if (buffered[0])
-            mp->buffered = atoi(buffered);
         for (i = 0; i < mp->lines; i++) { /* initialize line buffers */
             lp = mp->ldsc + i;
-            if (mp->buffered) {
-                lp->txbsz = mp->buffered;
+            if (buffered[0]) {
+                lp->txbsz = atoi(buffered);
                 lp->txbfd = 1;
-                lp->rxbsz = mp->buffered;
+                lp->rxbsz = atoi(buffered);
                 }
             else {
                 lp->txbsz = TMXR_MAXBUF;
@@ -2419,7 +2423,7 @@ while (*tptr) {
                 return r;
                 }
             }
-        if ((unbuffered) || (buffered[0] == '\0')) {
+        if (buffered[0] == '\0') {
             lp->rxbsz = lp->txbsz = TMXR_MAXBUF;
             lp->txbfd = 0;
             }
@@ -2431,6 +2435,7 @@ while (*tptr) {
         lp->txb = (char *)realloc (lp->txb, lp->txbsz);
         lp->rxb = (char *)realloc(lp->rxb, lp->rxbsz);
         lp->rbr = (char *)realloc(lp->rbr, lp->rxbsz);
+        lp->packet = packet;
         if (nolog) {
             free(lp->txlogname);
             lp->txlogname = NULL;
@@ -2485,7 +2490,6 @@ while (*tptr) {
                     else
                         return SCPE_ARG;
                     }
-                lp->packet = packet;
                 sock = sim_connect_sock_ex (datagram ? listen : NULL, destination, "localhost", NULL, datagram, packet);
                 if (sock != INVALID_SOCKET) {
                     _mux_detach_line (lp, FALSE, TRUE);
@@ -3288,20 +3292,27 @@ else {
         TMLN *lp;
         char *attach;
 
-        fprintf(st, "Multiplexer device: %s, ", (mp->dptr ? sim_dname (mp->dptr) : ""));
-        attach = tmxr_mux_attach_string (NULL, mp);
-        fprintf(st, "attached to %s, ", attach);
-        free (attach);
+        fprintf(st, "Multiplexer device: %s", (mp->dptr ? sim_dname (mp->dptr) : ""));
         if (mp->lines > 1) {
-            tmxr_show_lines(st, NULL, 0, mp);
             fprintf(st, ", ");
+            tmxr_show_lines(st, NULL, 0, mp);
             }
-        tmxr_show_summ(st, NULL, 0, mp);
-        fprintf(st, ", sessions=%d", mp->sessions);
-        if (mp->modem_control)
-            fprintf(st, ", ModemControl=enabled");
+        if (mp->packet)
+            fprintf(st, ", Packet");
+        if (mp->datagram)
+            fprintf(st, ", UDP");
         if (mp->notelnet)
             fprintf(st, ", Telnet=disabled");
+        if (mp->modem_control)
+            fprintf(st, ", ModemControl=enabled");
+        if (mp->buffered)
+            fprintf(st, ", Buffered=%d", mp->buffered);
+        attach = tmxr_mux_attach_string (NULL, mp);
+        if (attach)
+            fprintf(st, ",\n    attached to %s, ", attach);
+        free (attach);
+        tmxr_show_summ(st, NULL, 0, mp);
+        fprintf(st, ", sessions=%d", mp->sessions);
         fprintf(st, "\n");
         for (j = 0; j < mp->lines; j++) {
             lp = mp->ldsc + j;
@@ -4147,7 +4158,7 @@ for (i = t = 0; i < mp->lines; i++)
     if ((mp->ldsc[i].sock != 0) || (mp->ldsc[i].serport != 0))
         t = t + 1;
 if (mp->lines > 1)
-    fprintf (st, "%d connection%s", t, (t != 1) ? "s" : "");
+    fprintf (st, "%d current connection%s", t, (t != 1) ? "s" : "");
 else
     fprintf (st, "%s", (t == 1) ? "connected" : "disconnected");
 return SCPE_OK;

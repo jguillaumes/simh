@@ -414,7 +414,7 @@ static MTAB dup_mod[] = {
 #define DBG_PKT  (TMXR_DBG_PXMT|TMXR_DBG_PRCV)          /* display packets */
 #define DBG_XMT  TMXR_DBG_XMT                           /* display Transmitted Data */
 #define DBG_RCV  TMXR_DBG_RCV                           /* display Received Data */
-#define DBG_MDM  0x0004                                 /* display Modem SignalTransitions */
+#define DBG_MDM  TMXR_DBG_MDM                           /* display Modem SignalTransitions */
 #define DBG_CON  TMXR_DBG_CON                           /* display connection activities */
 #define DBG_TRC  TMXR_DBG_TRC                           /* display trace routine calls */
 #define DBG_ASY  TMXR_DBG_ASY                           /* display Asynchronous Activities */
@@ -1197,6 +1197,7 @@ int32 i, ndev, attached = 0;
 sim_debug(DBG_TRC, dptr, "dup_reset()\n");
 
 dup_desc.packet = TRUE;
+dup_desc.buffered = 16384;
 if ((UNIBUS) && (dptr == &dpv_dev)) {
     if (!(dptr->flags & DEV_DIS)) {
         sim_printf ("Can't enable Qbus device on Unibus system\n");
@@ -1230,8 +1231,11 @@ if (dup_ldsc == NULL) {                                 /* First time startup */
         dup_W6[i] = TRUE;
         }
     }
-for (i = 0; i < dup_desc.lines; i++)                    /* init each line */
+for (i = 0; i < dup_desc.lines; i++) {                  /* init each line */
     dup_clear (i, TRUE);
+    if (dup_units[i].flags & UNIT_ATT)
+        ++attached;
+    }
 dup_rxi = dup_txi = 0;                                  /* clr master int */
 CLR_INT (DUPRX);
 CLR_INT (DUPTX);
@@ -1258,7 +1262,7 @@ if (!cptr || !*cptr)
     return SCPE_ARG;
 if (!(uptr->flags & UNIT_ATTABLE))
     return SCPE_NOATT;
-sprintf (attach_string, "Line=%d,Buffered=16384,%s", dup, cptr);
+sprintf (attach_string, "Line=%d,%s", dup, cptr);
 r = tmxr_open_master (&dup_desc, attach_string);                 /* open master socket */
 free (uptr->filename);
 uptr->filename = tmxr_line_attach_string(&dup_desc.ldsc[dup]);
@@ -1275,6 +1279,7 @@ DEVICE *dptr = DUPDPTR;
 int32 dup = (int32)(uptr-dptr->units);
 TMLN *lp = &dup_ldsc[dup];
 int32 i, attached;
+t_stat r;
 
 if (!(uptr->flags & UNIT_ATT))                          /* attached? */
     return SCPE_OK;
@@ -1285,6 +1290,7 @@ for (i=attached=0; i<dup_desc.lines; i++)
         ++attached;
 if (!attached)
     sim_cancel (dup_units+dup_desc.lines);              /* stop poll on last detach */
+r = tmxr_detach_ln (lp);
 free (uptr->filename);
 uptr->filename = NULL;
 free (dup_rcvpacket[dup]);
@@ -1295,7 +1301,7 @@ free (dup_xmtpacket[dup]);
 dup_xmtpacket[dup] = NULL;
 dup_xmtpksize[dup] = 0;
 dup_xmtpkoffset[dup] = 0;
-return tmxr_detach_ln (lp);
+return r;
 }
 
 /* SET/SHOW SPEED processor */
