@@ -312,6 +312,7 @@ extern CPUTAB cpu_tab[];
 t_stat cpu_ex (t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_dep (t_value val, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_reset (DEVICE *dptr);
+t_bool cpu_is_pc_a_subroutine_call (t_addr **ret_addrs);
 t_stat cpu_set_hist (UNIT *uptr, int32 val, char *cptr, void *desc);
 t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, void *desc);
 t_stat cpu_show_virt (FILE *st, UNIT *uptr, int32 val, void *desc);
@@ -3019,8 +3020,59 @@ if (pcq_r)
     pcq_r->qptr = 0;
 else return SCPE_IERR;
 sim_brk_types = sim_brk_dflt = SWMASK ('E');
+sim_vm_is_subroutine_call = &cpu_is_pc_a_subroutine_call;
 set_r_display (0, MD_KER);
 return SCPE_OK;
+}
+
+static const char *cpu_next_caveats =
+"The NEXT command in the PDP11 simulator currently will enable stepping\n"
+"across subroutine calls which are initiated by the JSR instruction.\n"
+"This stepping works by dynamically establishing breakpoints at the\n"
+"10 memory addresses immediately following the instruction which initiated\n"
+"the subroutine call.  These dynamic breakpoints are automatically\n"
+"removed once the simulator returns to the sim> prompt for any reason.\n"
+"If the called routine returns somewhere other than one of these\n"
+"locations due to a trap, stack unwind or any other reason, instruction\n"
+"execution will continue until some other reason causes execution to stop.\n";
+
+t_bool cpu_is_pc_a_subroutine_call (t_addr **ret_addrs)
+{
+#define MAX_SUB_RETURN_SKIP 10
+static t_addr returns[MAX_SUB_RETURN_SKIP + 1] = {0};
+static t_bool caveats_displayed = FALSE;
+
+if (!caveats_displayed) {
+    caveats_displayed = TRUE;
+    printf ("%s", cpu_next_caveats);
+    if (sim_log)
+        fprintf (sim_log, "%s", cpu_next_caveats);
+    }
+if (SCPE_OK != get_aval (PC, &cpu_dev, &cpu_unit))      /* get data */
+    return FALSE;
+if ((sim_eval[0] & 0177000) == 0004000) {               /* JSR */
+    int32 dst, dstspec;
+    t_addr i, max_returns = MAX_SUB_RETURN_SKIP;
+    int32 save_Regs[8];
+
+    memcpy (save_Regs, R, sizeof(R));       /* save register state */
+    PC = PC + 2;                            /* account for instruction fetch */
+    dstspec = sim_eval[0] & 077;
+    dst = GeteaW (dstspec);
+    if (CPUT (CPUT_05|CPUT_20) &&           /* 11/05, 11/20 */
+        ((dstspec & 070) == 020))           /* JSR (R)+? */
+        dst = R[dstspec & 07];              /* use post incr */
+    memcpy (R, save_Regs, sizeof(R));       /* restore register state */
+    returns[0] = PC + (1 - fprint_sym (stdnul, PC, sim_eval, &cpu_unit, SWMASK ('M')));
+    if (((t_addr)dst > returns[0]) && ((dst - returns[0]) < max_returns*2))
+        max_returns = (dst - returns[0])/2;
+    for (i=1; i<max_returns; i++)
+        returns[i] = returns[i-1] + 2;      /* Possible skip return */
+    returns[i] = 0;                         /* Make sure the address list ends with a zero */
+    *ret_addrs = returns;
+    return TRUE;
+    }
+return FALSE;
 }
 
 /* Boot setup routine */

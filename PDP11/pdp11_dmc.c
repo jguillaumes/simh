@@ -2309,18 +2309,12 @@ while ((control = controller->control_out)) {
 controller->control_out = NULL;
 dmc_setreg(controller, 0, 0, DBG_RGC);
 if (controller->dev_type == DMR) {
-    if (dmc_is_attached(controller->unit)) {
-        /* Indicates microdiagnostics complete */
-        if (((*controller->csrs->sel0 & DMC_SEL0_M_UDIAG) != 0) ^
-            (dmc_microdiag[controller->index]))
-            dmc_setreg(controller, 2, 0x8000, DBG_RGC);/* Microdiagnostics Complete */
-        else
-            dmc_setreg(controller, 2, 0x4000, DBG_RGC); /* Microdiagnostics Inhibited */
-        }
-    else {
-        /* Indicate M8203 (Line Unit) test failed */
-        dmc_setreg(controller, 2, 0x0200, DBG_RGC);
-        }
+    /* Indicates microdiagnostics complete */
+    if (((*controller->csrs->sel0 & DMC_SEL0_M_UDIAG) != 0) ^
+        (dmc_microdiag[controller->index]))
+        dmc_setreg(controller, 2, 0x8000, DBG_RGC);/* Microdiagnostics Complete */
+    else
+        dmc_setreg(controller, 2, 0x4000, DBG_RGC); /* Microdiagnostics Inhibited */
     }
 else {
     /* preserve contents of BSEL3 if DMC-11 */
@@ -3721,6 +3715,7 @@ if (!(dptr->flags & DEV_DIS)) {
             dmc_buffer_queue_init_all(controller);
             dmc_clrinint(controller);
             dmc_clroutint(controller);
+            controller->dmc_wr_delay = 0;
             for (j=0; j<dptr->numunits-1; j++) {
                 sim_cancel (&dptr->units[j]); /* stop poll */
                 if (dptr->units[j].flags & UNIT_ATT)

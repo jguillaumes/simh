@@ -2454,7 +2454,7 @@ if (label) {
         cmdp = find_cmd (gbuf);                         /* return the errorStage things to the stat will be returned */
         goto Cleanup_Return;
         }
-}
+    }
 if (errabort)                                           /* -e flag? */
     set_on (1, NULL);                                   /* equivalent to ON ERROR RETURN */
 
@@ -2498,6 +2498,7 @@ do {
                 stat = cmdp->action (cmdp->arg, cptr);  /* exec other cmd */
         }
     else stat = SCPE_UNK;                               /* bad cmd given */
+    echo = sim_do_echo;                                 /* Allow for SET VERIFY */
     stat_nomessage = stat & SCPE_NOMESSAGE;             /* extract possible message supression flag */
     stat_nomessage = stat_nomessage || (!sim_show_message);/* Apply global suppression */
     stat = SCPE_BARE_STATUS(stat);                      /* remove possible flag */
@@ -3679,10 +3680,10 @@ if (flag) {
     fprintf (st, "\n\t\tAsynchronous Clock support");
 #endif
     fprintf (st, "\n\tHost Platform:");
-#if defined (__clang_version__)
-    fprintf (st, "\n\t\tCompiler: clang %s", __clang_version__);
-#elif defined (__GNUC__) && defined (__VERSION__)
+#if defined (__GNUC__) && defined (__VERSION__)
     fprintf (st, "\n\t\tCompiler: GCC %s", __VERSION__);
+#elif defined (__clang_version__)
+    fprintf (st, "\n\t\tCompiler: clang %s", __clang_version__);
 #elif defined (_MSC_FULL_VER) && defined (_MSC_BUILD)
     fprintf (st, "\n\t\tCompiler: Microsoft Visual C++ %d.%02d.%05d.%02d", _MSC_FULL_VER/10000000, (_MSC_FULL_VER/100000)%100, _MSC_FULL_VER%100000, _MSC_BUILD);
 #elif defined (__DECC_VER)
@@ -5224,6 +5225,7 @@ t_stat run_cmd (int32 flag, char *cptr)
 {
 char *tptr, gbuf[CBUFSIZE];
 uint32 i, j;
+int32 sim_next;
 int32 unitno;
 t_value pcv;
 t_stat r;
@@ -5250,8 +5252,18 @@ if ((flag == RU_RUN) || (flag == RU_GO)) {              /* run or go */
         return r;
     }
 
-else if (flag == RU_STEP) {                             /* step */
-   if (*cptr != 0) {                                    /* argument? */
+else if ((flag == RU_STEP) ||
+         ((flag == RU_NEXT) && !sim_vm_is_subroutine_call)) { /* step */
+    static t_bool not_implemented_message = FALSE;
+
+    if ((!not_implemented_message) && (flag == RU_NEXT)) {
+        printf ("This simulator does not have subroutine call detection.\nPerforming a STEP instead\n");
+        if (sim_log)
+            fprintf (sim_log, "This simulator does not have subroutine call detection.\nPerforming a STEP instead\n");
+        not_implemented_message = TRUE;
+        flag = RU_STEP;
+        }
+    if (*cptr != 0) {                                   /* argument? */
         cptr = get_glyph (cptr, gbuf, 0);               /* get next glyph */
         if (*cptr != 0)                                 /* should be end */
             return SCPE_2MARG;
@@ -5264,7 +5276,16 @@ else if (flag == RU_STEP) {                             /* step */
 else if (flag == RU_NEXT) {                             /* next */
     t_addr *addrs;
 
-    if ((sim_vm_is_subroutine_call) && sim_vm_is_subroutine_call(&addrs)) {
+    if (*cptr != 0) {                                   /* argument? */
+        cptr = get_glyph (cptr, gbuf, 0);               /* get next glyph */
+        if (*cptr != 0)                                 /* should be end */
+            return SCPE_2MARG;
+        sim_next = (int32) get_uint (gbuf, 10, INT_MAX, &r);
+        if ((r != SCPE_OK) || (sim_next <= 0))          /* error? */
+            return SCPE_ARG;
+        }
+    else sim_next = 1;
+    if (sim_vm_is_subroutine_call(&addrs)) {
         sim_brk_types |= BRK_TYP_DYN_STEPOVER;
         for (i=0; addrs[i]; i++)
             sim_brk_set (addrs[i], BRK_TYP_DYN_STEPOVER, 0, NULL);
@@ -5345,7 +5366,44 @@ sim_throt_sched ();                                     /* set throttle */
 sim_brk_clract ();                                      /* defang actions */
 sim_rtcn_init_all ();                                   /* re-init clocks */
 sim_start_timer_services ();                            /* enable wall clock timing */
-r = sim_instr();
+
+do {
+    t_addr *addrs;
+
+    r = sim_instr();
+    if ((flag != RU_NEXT) ||                            /* done if not doing NEXT */
+        (--sim_next <=0))
+        break;
+    if (sim_step == 0) {                                /* doing a NEXT? */
+        t_addr val;
+        BRKTAB *bp;
+
+        if (r >= SCPE_BASE)                             /* done if an error occurred */
+            break;
+        if (sim_vm_pc_value)                            /* done if didn't stop at a dynamic breakpoint */
+            val = (t_addr)(*sim_vm_pc_value)();
+        else
+            val = (t_addr)get_rval (sim_PC, 0);
+        if ((!(bp = sim_brk_fnd (val))) || (!(bp->typ & BRK_TYP_DYN_STEPOVER)))
+            break;
+        sim_brk_clrall (BRK_TYP_DYN_STEPOVER);          /* cancel any step/over subroutine breakpoints */
+        }
+    else {
+        if (r != SCPE_STEP)                             /* done if step didn't complete with step expired */
+            break;
+        }
+    /* setup another next/step */
+    sim_step = 0;
+    if (sim_vm_is_subroutine_call(&addrs)) {
+        sim_brk_types |= BRK_TYP_DYN_STEPOVER;
+        for (i=0; addrs[i]; i++)
+            sim_brk_set (addrs[i], BRK_TYP_DYN_STEPOVER, 0, NULL);
+        }
+    else
+        sim_step = 1;
+    if (sim_step)                                           /* set step timer */
+        sim_activate (&sim_step_unit, sim_step);
+    } while (1);
 
 sim_is_running = 0;                                     /* flag idle */
 sim_stop_timer_services ();                             /* disable wall clock timing */
