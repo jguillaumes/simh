@@ -46,6 +46,18 @@
 #define RU_CONT         4                               /* continue */
 #define RU_BOOT         5                               /* boot */
 
+/* exdep_cmd parameters */
+
+#define EX_D            0                               /* deposit */
+#define EX_E            1                               /* examine */
+#define EX_I            2                               /* interactive */
+
+/* brk_cmd parameters */
+
+#define SSH_ST          0                               /* set */
+#define SSH_SH          1                               /* show */
+#define SSH_CL          2                               /* clear */
+
 /* get_sim_opt parameters */
 
 #define CMD_OPT_SW      001                             /* switches */
@@ -82,6 +94,8 @@ t_stat call_cmd (int32 flag, char *ptr);
 t_stat on_cmd (int32 flag, char *ptr);
 t_stat noop_cmd (int32 flag, char *ptr);
 t_stat assert_cmd (int32 flag, char *ptr);
+t_stat send_cmd (int32 flag, char *ptr);
+t_stat expect_cmd (int32 flag, char *ptr);
 t_stat help_cmd (int32 flag, char *ptr);
 t_stat spawn_cmd (int32 flag, char *ptr);
 t_stat echo_cmd (int32 flag, char *ptr);
@@ -98,6 +112,7 @@ t_stat _sim_activate_after (UNIT *uptr, int32 usecs_walltime);
 t_stat sim_cancel (UNIT *uptr);
 t_bool sim_is_active (UNIT *uptr);
 int32 sim_activate_time (UNIT *uptr);
+t_stat sim_run_boot_prep (void);
 double sim_gtime (void);
 uint32 sim_grtime (void);
 int32 sim_qcount (void);
@@ -114,30 +129,47 @@ char *get_sim_opt (int32 opt, char *cptr, t_stat *st);
 char *get_glyph (const char *iptr, char *optr, char mchar);
 char *get_glyph_nc (const char *iptr, char *optr, char mchar);
 char *get_glyph_quoted (const char *iptr, char *optr, char mchar);
-t_value get_uint (char *cptr, uint32 radix, t_value max, t_stat *status);
-char *get_range (DEVICE *dptr, char *cptr, t_addr *lo, t_addr *hi,
+t_value get_uint (const char *cptr, uint32 radix, t_value max, t_stat *status);
+const char *get_range (DEVICE *dptr, const char *cptr, t_addr *lo, t_addr *hi,
     uint32 rdx, t_addr max, char term);
-t_value strtotv (const char *cptr, char **endptr, uint32 radix);
+t_stat sim_decode_quoted_string (const char *iptr, uint8 *optr, uint32 *osize);
+char *sim_encode_quoted_string (const uint8 *iptr, uint32 size);
+void fprint_buffer_string (FILE *st, const uint8 *buf, uint32 size);
+t_value strtotv (const char *cptr, const char **endptr, uint32 radix);
 t_stat fprint_val (FILE *stream, t_value val, uint32 rdx, uint32 wid, uint32 fmt);
 t_stat sim_print_val (t_value val, uint32 radix, uint32 width, uint32 format);
 char *read_line (char *cptr, int32 size, FILE *stream);
 void fprint_reg_help (FILE *st, DEVICE *dptr);
 void fprint_set_help (FILE *st, DEVICE *dptr);
 void fprint_show_help (FILE *st, DEVICE *dptr);
-CTAB *find_cmd (char *gbuf);
-DEVICE *find_dev (char *ptr);
-DEVICE *find_unit (char *ptr, UNIT **uptr);
+CTAB *find_cmd (const char *gbuf);
+DEVICE *find_dev (const char *ptr);
+DEVICE *find_unit (const char *ptr, UNIT **uptr);
 DEVICE *find_dev_from_unit (UNIT *uptr);
 t_stat sim_register_internal_device (DEVICE *dptr);
 void sim_sub_args (char *in_str, size_t in_str_size, char *do_arg[]);
-REG *find_reg (char *ptr, char **optr, DEVICE *dptr);
-CTAB *find_ctab (CTAB *tab, char *gbuf);
-C1TAB *find_c1tab (C1TAB *tab, char *gbuf);
-SHTAB *find_shtab (SHTAB *tab, char *gbuf);
+REG *find_reg (const char *ptr, const char **optr, DEVICE *dptr);
+CTAB *find_ctab (CTAB *tab, const char *gbuf);
+C1TAB *find_c1tab (C1TAB *tab, const char *gbuf);
+SHTAB *find_shtab (SHTAB *tab, const char *gbuf);
 t_stat get_aval (t_addr addr, DEVICE *dptr, UNIT *uptr);
 BRKTAB *sim_brk_fnd (t_addr loc);
 uint32 sim_brk_test (t_addr bloc, uint32 btyp);
 void sim_brk_clrspc (uint32 spc);
+char *sim_brk_clract (void);
+void sim_brk_setact (const char *action);
+t_stat sim_send_input (SEND *snd, uint8 *data, size_t size, uint32 after, uint32 delay);
+t_stat sim_show_send_input (FILE *st, SEND *snd);
+t_bool sim_send_poll_data (SEND *snd, t_stat *stat);
+t_stat sim_send_clear (SEND *snd);
+t_stat sim_set_expect (EXPECT *exp, char *cptr);
+t_stat sim_set_noexpect (EXPECT *exp, char *cptr);
+t_stat sim_exp_set (EXPECT *exp, const char *match, int32 cnt, uint32 after, int32 switches, char *act);
+t_stat sim_exp_clr (EXPECT *exp, const char *match);
+t_stat sim_exp_clrall (EXPECT *exp);
+t_stat sim_exp_show (FILE *st, EXPECT *exp, const char *match);
+t_stat sim_exp_showall (FILE *st, EXPECT *exp);
+t_stat sim_exp_check (EXPECT *exp, uint8 data);
 char *match_ext (char *fnam, char *ext);
 t_stat show_version (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr);
 t_stat set_dev_debug (DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr);
@@ -146,6 +178,7 @@ const char *sim_error_text (t_stat stat);
 t_stat sim_string_to_stat (char *cptr, t_stat *cond);
 t_stat sim_cancel_step (void);
 void sim_printf (const char* fmt, ...);
+void sim_data_trace(DEVICE *dptr, UNIT *uptr, const uint8 *data, const char *position, size_t len, const char *txt, uint32 reason);
 void sim_debug_bits (uint32 dbits, DEVICE* dptr, BITFIELD* bitdefs,
     uint32 before, uint32 after, int terminate);
 #if defined (__DECC) && defined (__VMS) && (defined (__VAX) || (__DECC_VER < 60590001))
@@ -156,7 +189,7 @@ void sim_debug_bits (uint32 dbits, DEVICE* dptr, BITFIELD* bitdefs,
 void sim_debug (uint32 dbits, DEVICE* dptr, const char* fmt, ...);
 #else
 void _sim_debug (uint32 dbits, DEVICE* dptr, const char* fmt, ...);
-#define sim_debug(dbits, dptr, ...) if (sim_deb && ((dptr)->dctrl & dbits)) _sim_debug (dbits, dptr, __VA_ARGS__); else (void)0
+#define sim_debug(dbits, dptr, ...) if (sim_deb && dptr && ((dptr)->dctrl & dbits)) _sim_debug (dbits, dptr, __VA_ARGS__); else (void)0
 #endif
 void fprint_stopped_gen (FILE *st, t_stat v, REG *pc, DEVICE *dptr);
 #define SCP_HELP_FLAT   (1u << 31)       /* Force flat help when prompting is not possible */
@@ -192,6 +225,8 @@ extern volatile int32 stop_cpu;
 extern uint32 sim_brk_types;                            /* breakpoint info */
 extern uint32 sim_brk_dflt;
 extern uint32 sim_brk_summ;
+extern t_bool sim_brk_pend[SIM_BKPT_N_SPC];
+extern t_addr sim_brk_ploc[SIM_BKPT_N_SPC];
 extern FILE *stdnul;
 extern t_bool sim_asynch_enabled;
 
@@ -218,6 +253,7 @@ extern void (*sim_vm_post) (t_bool from_scp);
 extern CTAB *sim_vm_cmd;
 extern void (*sim_vm_fprint_addr) (FILE *st, DEVICE *dptr, t_addr addr);
 extern t_addr (*sim_vm_parse_addr) (DEVICE *dptr, char *cptr, char **tptr);
+extern t_bool (*sim_vm_fprint_stopped) (FILE *st, t_stat reason);
 extern t_value (*sim_vm_pc_value) (void);
 extern t_bool (*sim_vm_is_subroutine_call) (t_addr **ret_addrs);
 

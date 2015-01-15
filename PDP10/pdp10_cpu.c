@@ -716,6 +716,11 @@ pager_tc = FALSE;                                       /* not in trap cycle */
 pflgs = 0;                                              /* not in PXCT */
 xct_cnt = 0;                                            /* count XCT's */
 if (sim_interval <= 0) {                                /* check clock queue */
+    /* make sure all useful state is in simh registers while processing events */
+    saved_PC = pager_PC & AMASK;                        /* failing instr PC */
+    set_ac_display (ac_cur);                            /* set up AC display */
+    pcq_r->qptr = pcq_p;                                /* update pc q ptr */
+
     if ((i = sim_process_event ()))                     /* error?  stop sim */
         ABORT (i);
     if (fe_xct)
@@ -2380,13 +2385,11 @@ a10 ea;
 d10 inst, indrct;
 int32 i, pflgs = 0;
 t_addr adn, max_returns = MAX_SUB_RETURN_SKIP;
-int32 xr, ac;
+int32 xr;
 
 if (!caveats_displayed) {
     caveats_displayed = TRUE;
-    printf ("%s", cpu_next_caveats);
-    if (sim_log)
-        fprintf (sim_log, "%s", cpu_next_caveats);
+    sim_printf ("%s", cpu_next_caveats);
     }
 if (SCPE_OK != get_aval ((saved_PC & AMASK), &cpu_dev, &cpu_unit))  /* get data */
     return FALSE;
@@ -2397,7 +2400,6 @@ switch (GET_OP(inst))
     case 0265:              /* JSP */
     case 0266:              /* JSA */
     case 0267:              /* JRA */
-        ac = GET_AC (inst);                     /* get AC */
         for (indrct = inst, i = 0; i < ind_max; i++) {/* calc eff addr */
             ea = GET_ADDR (indrct);
             xr = GET_XR (indrct);
@@ -2466,7 +2468,6 @@ return SCPE_OK;
 
 void set_ac_display (d10 *acbase)
 {
-extern REG *find_reg (char *cptr, char **optr, DEVICE *dptr);
 REG *rptr;
 int i;
 

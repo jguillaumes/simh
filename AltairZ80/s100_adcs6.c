@@ -44,7 +44,6 @@
  *************************************************************************/
 
 /*#define DBG_MSG */
-#define DBG_MSG
 #include "altairz80_defs.h"
 
 #if defined (_WIN32)
@@ -55,22 +54,16 @@
 #include "wd179x.h"
 
 #ifdef DBG_MSG
-#define DBG_PRINT(args) printf args
+#define DBG_PRINT(args) sim_printf args
 #else
 #define DBG_PRINT(args)
 #endif
 
 /* Debug flags */
 #define ERROR_MSG   (1 << 0)
-#define SEEK_MSG    (1 << 1)
-#define CMD_MSG     (1 << 2)
-#define RD_DATA_MSG (1 << 3)
-#define WR_DATA_MSG (1 << 4)
-#define STATUS_MSG  (1 << 5)
-#define DRIVE_MSG   (1 << 6)
-#define VERBOSE_MSG (1 << 7)
-#define IRQ_MSG     (1 << 8)
-#define DMA_MSG     (1 << 9)
+#define DRIVE_MSG   (1 << 1)
+#define VERBOSE_MSG (1 << 2)
+#define DMA_MSG     (1 << 3)
 
 #define ADCS6_MAX_DRIVES    4
 #define ADCS6_ROM_SIZE      (2 * 1024)
@@ -102,13 +95,8 @@ extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_typ
 
 static t_stat adcs6_svc (UNIT *uptr);
 
-extern REG *sim_PC;
 extern uint32 PCX;      /* external view of PC  */
 
-#define UNIT_V_ADCS6_WLK        (UNIT_V_UF + 0) /* write locked                             */
-#define UNIT_ADCS6_WLK          (1 << UNIT_V_ADCS6_WLK)
-#define UNIT_V_ADCS6_VERBOSE    (UNIT_V_UF + 1) /* verbose mode, i.e. show error messages   */
-#define UNIT_ADCS6_VERBOSE      (1 << UNIT_V_ADCS6_VERBOSE)
 #define UNIT_V_ADCS6_ROM        (UNIT_V_UF + 2) /* boot ROM enabled                         */
 #define UNIT_ADCS6_ROM          (1 << UNIT_V_ADCS6_ROM)
 #define ADCS6_CAPACITY          (77*2*16*256)   /* Default Micropolis Disk Capacity         */
@@ -189,37 +177,32 @@ static UNIT adcs6_unit[] = {
 };
 
 static REG adcs6_reg[] = {
-    { HRDATA (J7,           dipswitch,             8), },
+    { HRDATAD (J7,           dipswitch,             8, "5-position DIP switch on 64FDC card"), },
     { NULL }
 };
 
+#define ADCS6_NAME  "ADC Super-Six ADCS6"
+
 static MTAB adcs6_mod[] = {
-    { MTAB_XTD|MTAB_VDV,    0,                  "MEMBASE",  "MEMBASE",  &set_membase, &show_membase, NULL },
-    { MTAB_XTD|MTAB_VDV,    0,                  "IOBASE",   "IOBASE",   &set_iobase, &show_iobase, NULL },
-    { UNIT_ADCS6_WLK,       0,                  "WRTENB",   "WRTENB",   NULL  },
-    { UNIT_ADCS6_WLK,       UNIT_ADCS6_WLK,     "WRTLCK",   "WRTLCK",   NULL  },
+    { MTAB_XTD|MTAB_VDV,    0,                  "MEMBASE",  "MEMBASE",
+        &set_membase, &show_membase, NULL, "Sets disk controller memory base address"   },
+    { MTAB_XTD|MTAB_VDV,    0,                  "IOBASE",   "IOBASE",
+        &set_iobase, &show_iobase, NULL, "Sets disk controller I/O base address"        },
     /* quiet, no warning messages       */
-    { UNIT_ADCS6_VERBOSE,  0,                   "QUIET",    "QUIET",    NULL },
-    /* verbose, show warning messages   */
-    { UNIT_ADCS6_VERBOSE,  UNIT_ADCS6_VERBOSE,  "VERBOSE",  "VERBOSE",  NULL },
-    { UNIT_ADCS6_ROM,      0,                   "NOROM",    "NOROM",    NULL },
-    { UNIT_ADCS6_ROM,      UNIT_ADCS6_ROM,      "ROM",      "ROM",      NULL },
+    { UNIT_ADCS6_ROM,      0,                   "NOROM",    "NOROM",
+        NULL, NULL, NULL, "Disables boot ROM for unit " ADCS6_NAME "n"                  },
+    { UNIT_ADCS6_ROM,      UNIT_ADCS6_ROM,      "ROM",      "ROM",
+        NULL, NULL, NULL, "Enables boot ROM for unit " ADCS6_NAME "n"                   },
     { 0 }
 };
 
 /* Debug Flags */
 static DEBTAB adcs6_dt[] = {
-    { "ERROR",  ERROR_MSG },
-    { "SEEK",   SEEK_MSG },
-    { "CMD",    CMD_MSG },
-    { "RDDATA", RD_DATA_MSG },
-    { "WRDATA", WR_DATA_MSG },
-    { "STATUS", STATUS_MSG },
-    { "DRIVE",  DRIVE_MSG },
-    { "VERBOSE",VERBOSE_MSG },
-    { "IRQ",    IRQ_MSG },
-    { "DMA",    DMA_MSG },
-    { NULL,     0 }
+    { "ERROR",      ERROR_MSG,      "Error messages"    },
+    { "DRIVE",      DRIVE_MSG,      "Drive messages"    },
+    { "VERBOSE",    VERBOSE_MSG,    "Verbose messages"  },
+    { "DMA",        DMA_MSG,        "DMA messages"      },
+    { NULL,         0                                   }
 };
 
 DEVICE adcs6_dev = {
@@ -228,7 +211,7 @@ DEVICE adcs6_dev = {
     NULL, NULL, &adcs6_reset,
     &adcs6_boot, &adcs6_attach, &adcs6_detach,
     &adcs6_info_data, (DEV_DISABLE | DEV_DIS | DEV_DEBUG), ERROR_MSG,
-    adcs6_dt, NULL, "ADC Super-Six ADCS6"
+    adcs6_dt, NULL, ADCS6_NAME
 };
 
 /* This is the DIGITEX Monitor version 1.2.A -- 10/06/83
@@ -400,7 +383,7 @@ static t_stat adcs6_svc (UNIT *uptr)
 
     adcs6_info->rtc ++;
 
-    printf("Timer IRQ\n");
+    sim_printf("Timer IRQ\n");
     adcs6_info->ipend |= ADCS6_IRQ_TIMER3;
 
 /*  sim_activate (adcs6_unit, adcs6_unit->wait); */ /* requeue! */
@@ -428,7 +411,7 @@ static t_stat adcs6_reset(DEVICE *dptr)
         if (adcs6_hasProperty(UNIT_ADCS6_ROM)) {
             sim_debug(VERBOSE_MSG, &adcs6_dev, "ADCS6: ROM Enabled.\n");
             if(sim_map_resource(pnp->mem_base, pnp->mem_size, RESOURCE_TYPE_MEMORY, &adcs6rom, FALSE) != 0) {
-                printf("%s: error mapping MEM resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
+                sim_printf("%s: error mapping MEM resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
                 return SCPE_ARG;
             }
             adcs6_info->rom_disabled = FALSE;
@@ -439,7 +422,7 @@ static t_stat adcs6_reset(DEVICE *dptr)
 
         /* Connect ADCS6 FDC Synchronization / Drive / Density Register */
         if(sim_map_resource(0x14, 0x01, RESOURCE_TYPE_IO, &adcs6_control, FALSE) != 0) {
-            printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
+            sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
 /*#define ADCS6 */
@@ -447,19 +430,19 @@ static t_stat adcs6_reset(DEVICE *dptr)
         /* Connect ADCS6 Interrupt, and Aux Disk Registers */
 
         if(sim_map_resource(0x10, 0x04, RESOURCE_TYPE_IO, &adcs6_dma, FALSE) != 0) {
-            printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
+            sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
 
         /* Connect ADCS6 Timer Registers */
         if(sim_map_resource(0x04, 0x08, RESOURCE_TYPE_IO, &adcs6_timer, FALSE) != 0) {
-            printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
+            sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
 #endif
         /* Connect ADCS6 Memory Management / Bank Select Register */
         if(sim_map_resource(0x15, 0x7, RESOURCE_TYPE_IO, &adcs6_banksel, FALSE) != 0) {
-            printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
+            sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
     }

@@ -27,6 +27,8 @@
    11-Jun-2013  MB      First version
 */
 
+#if defined(USE_SIM_VIDEO)
+
 #include "sim_video.h"
 
 t_bool vid_active = FALSE;
@@ -39,8 +41,6 @@ t_bool vid_mouse_b3 = FALSE;
 #if HAVE_LIBSDL
 #include <SDL.h>
 #include <SDL_thread.h>
-
-extern int32 sim_is_running;
 
 #define EVENT_REDRAW    1                               /* redraw event for SDL */
 #define EVENT_CLOSE     2                               /* close event for SDL */
@@ -1685,3 +1685,5 @@ return SCPE_OK;
 
 
 #endif
+
+#endif /* USE_SIM_VIDEO */

@@ -75,12 +75,14 @@
 extern int32 PSL;                                       /* PSL */
 extern int32 fault_PC;                                  /* fault PC */
 extern int32 int_req[IPL_HLVL];
-
+uint32 cpu_idle_mask;                                   /* idle mask (OS type) */
+#define ULTRIX1X ((cpu_idle_mask&VAX_IDLE_ULT1X) && ((cpu_idle_mask & ~VAX_IDLE_ULT1X) == 0))
 #else                                                   /* PDP-11 version */
 #include "pdp11_defs.h"
 #define XQ_RDX          8
 #define XQ_WID          16
 extern int32 int_req[IPL_HLVL];
+#define ULTRIX1X 0
 #endif
 
 #include "sim_ether.h"
@@ -264,6 +266,9 @@ struct xq_device {
   uint32            coalesce_latency_ticks;             /* instructions in coalesce_latency microseconds */
   struct xq_sanity  sanity;                             /* sanity timer information */
   t_bool            lockmode;                           /* DEQNA-Lock mode */
+  uint32            throttle_time;                      /* ms burst time window */
+  uint32            throttle_burst;                     /* packets passed with throttle_time which trigger throttling */
+  uint32            throttle_delay;                     /* ms to delay when throttling.  0 disables throttling */
                                                         /*- initialized values - DO NOT MOVE */
 
                                                         /* I/O register storage */

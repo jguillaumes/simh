@@ -28,8 +28,8 @@
    Alpha Program Office.
 */
 
-#ifndef ALPHA_DEFS_H_
-#define ALPHA_DEFS_H_  0
+#ifndef _ALPHA_DEFS_H_
+#define _ALPHA_DEFS_H_  0
 
 #include "sim_defs.h"
 #include <setjmp.h>

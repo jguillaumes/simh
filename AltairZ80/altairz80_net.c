@@ -77,30 +77,32 @@ static struct {
 static UNIT net_unit = {
     UDATA (&net_svc, UNIT_ATTABLE, 0),
     0,  /* wait, set in attach  */
-    0,  /* u3, unused			*/
-    0,  /* u4, unused			*/
+    0,  /* u3, unused           */
+    0,  /* u4, unused           */
     0,  /* u5, unused           */
     0,  /* u6, unused           */
 };
 
 static REG net_reg[] = {
-    { DRDATA (POLL,         net_unit.wait,  32)             },
+    { DRDATAD (POLL, net_unit.wait,  32, "Polling interval") },
     { NULL }
 };
 
 static MTAB net_mod[] = {
-    { UNIT_SERVER, 0,           "CLIENT", "CLIENT", &set_net}, /* machine is a client   */
-    { UNIT_SERVER, UNIT_SERVER, "SERVER", "SERVER", &set_net}, /* machine is a server   */
+    { UNIT_SERVER, 0,           "CLIENT", "CLIENT", &set_net, NULL, NULL,
+        "Sets machine to client mode"}, /* machine is a client   */
+    { UNIT_SERVER, UNIT_SERVER, "SERVER", "SERVER", &set_net, NULL, NULL,
+        "Sets machine to server mode"}, /* machine is a server   */
     { 0 }
 };
 
 /* Debug Flags */
 static DEBTAB net_dt[] = {
-    { "ACCEPT", ACCEPT_MSG  },
-    { "DROP",   DROP_MSG    },
-    { "IN",     IN_MSG      },
-    { "OUT",    OUT_MSG     },
-    { NULL,     0 }
+    { "ACCEPT", ACCEPT_MSG, "Accept messages"   },
+    { "DROP",   DROP_MSG,   "Drop messages"     },
+    { "IN",     IN_MSG,     "Incoming messages" },
+    { "OUT",    OUT_MSG,    "Outgoing messages" },
+    { NULL,     0                               }
 };
 
 DEVICE net_dev = {
@@ -214,7 +216,7 @@ static t_stat net_svc(UNIT *uptr) {
             serviceDescriptor[0].ioSocket = sim_connect_sock(net_unit.filename, "localhost", "3000");
             if (serviceDescriptor[0].ioSocket == INVALID_SOCKET)
                 return SCPE_IOERR;
-            printf("\rWaiting for server ... Type g<return> (possibly twice) when ready" NLP);
+            sim_printf("\rWaiting for server ... Type g<return> (possibly twice) when ready" NLP);
             return SCPE_STOP;
         }
         for (i = 0; i <= MAX_CONNECTIONS; i++)
@@ -253,7 +255,7 @@ static t_stat net_svc(UNIT *uptr) {
                             serviceDescriptor[i].outputPosRead -= BUFFER_LENGTH;
                     }
                     else
-                        printf("write %i" NLP, r);
+                        sim_printf("write %i" NLP, r);
                 }
             }
     }
@@ -283,7 +285,7 @@ int32 netData(const int32 port, const int32 io, const int32 data) {
         if (serviceDescriptor[i].Z80DataPort == port) {
             if (io == 0) {  /* IN   */
                 if (serviceDescriptor[i].inputSize == 0) {
-                    printf("re-read from %i" NLP, port);
+                    sim_printf("re-read from %i" NLP, port);
                     result = serviceDescriptor[i].inputBuffer[serviceDescriptor[i].inputPosRead > 0 ?
                         serviceDescriptor[i].inputPosRead - 1 : BUFFER_LENGTH - 1];
                 }
@@ -298,7 +300,7 @@ int32 netData(const int32 port, const int32 io, const int32 data) {
             }
             else {          /* OUT  */
                 if (serviceDescriptor[i].outputSize == BUFFER_LENGTH) {
-                    printf("over-write %i to %i" NLP, data, port);
+                    sim_printf("over-write %i to %i" NLP, data, port);
                     serviceDescriptor[i].outputBuffer[serviceDescriptor[i].outputPosWrite > 0 ?
                         serviceDescriptor[i].outputPosWrite - 1 : BUFFER_LENGTH - 1] = data;
                 }

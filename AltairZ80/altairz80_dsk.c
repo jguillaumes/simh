@@ -103,9 +103,31 @@
     X = Not used
     Sector number = binary of the sector number currently under the
                                     head, 0-31.
-    T = Sector True, is a 1 when the sector is positioned to read or
+    T = Sector True, is a 0 when the sector is positioned to read or
             write.
 
+	----------------------------------------------------------
+
+	5/22/2014 - Updated by Mike Douglas to support the Altair Minidisk.
+				This disk uses 35 (vs 70) tracks of 16 (vs 32) sectors 
+				of 137 bytes each.
+
+	6/30/2014 - When the disk is an Altair Minidisk, load the head as 
+				soon as the disk is enabled, and ignore the head
+				unload command (both like the real hardware). 
+
+	7/13/2014 - This code previously returned zero when the sector position
+				register was read with the head not loaded. This zero looks
+				like an asserted "Sector True" flag for sector zero. The real
+				hardware returns 0xff in this case. The same problem occurs
+				when the drive is deselected - the sector position register
+				returned zero instead of 0xff. These have been corrected.
+
+	7/13/2014	Some software for the Altair skips a sector by verifying
+				that "Sector True" goes false. Previously, this code
+				returned "Sector True" every time the sector register 
+				was read. Now the flag alternates true and false on
+				subsequent reads of the sector register. 
 */
 
 #include "altairz80_defs.h"
@@ -131,21 +153,26 @@
 #define NUM_OF_DSK_MASK     (NUM_OF_DSK - 1)
 #define BOOTROM_SIZE_DSK    256                     /* size of boot rom                         */
 
+#define	MINI_DISK_SECT		16						/* mini disk sectors per track              */
+#define	MINI_DISK_TRACKS	35						/* number of tracks on mini disk            */
+#define	MINI_DISK_SIZE		(MINI_DISK_TRACKS * MINI_DISK_SECT * DSK_SECTSIZE)
+#define MINI_DISK_DELTA     4096                    /* threshold for detecting mini disks       */
 
 int32 dsk10(const int32 port, const int32 io, const int32 data);
 int32 dsk11(const int32 port, const int32 io, const int32 data);
 int32 dsk12(const int32 port, const int32 io, const int32 data);
 static t_stat dsk_boot(int32 unitno, DEVICE *dptr);
 static t_stat dsk_reset(DEVICE *dptr);
+static t_stat dsk_attach(UNIT *uptr, char *cptr);
 
-extern REG *sim_PC;
 extern UNIT cpu_unit;
 extern uint32 PCX;
 
-extern t_stat install_bootrom(int32 bootrom[], int32 size, int32 addr, int32 makeROM);
+extern t_stat install_bootrom(const int32 bootrom[], const int32 size, const int32 addr, const int32 makeROM);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
                                int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
 void install_ALTAIRbootROM(void);
+extern int32 find_unit_index(UNIT *uptr);
 
 /* global data on status */
 
@@ -156,6 +183,10 @@ static int32 current_track  [NUM_OF_DSK]    = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 static int32 current_sector [NUM_OF_DSK]    = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static int32 current_byte   [NUM_OF_DSK]    = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static int32 current_flag   [NUM_OF_DSK]    = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static int32 sectors_per_track [NUM_OF_DSK]	= { DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT,
+                                                DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT,
+                                                DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT,
+                                                DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT };
 static uint8 tracks         [NUM_OF_DSK]    = { MAX_TRACKS, MAX_TRACKS, MAX_TRACKS, MAX_TRACKS,
                                                 MAX_TRACKS, MAX_TRACKS, MAX_TRACKS, MAX_TRACKS,
                                                 MAX_TRACKS, MAX_TRACKS, MAX_TRACKS, MAX_TRACKS,
@@ -170,6 +201,42 @@ static int32 warnDSK10                      = 0;
 static int32 warnDSK11                      = 0;
 static int32 warnDSK12                      = 0;
 static int8 dskbuf[DSK_SECTSIZE];                       /* data Buffer                                  */
+static int32 sector_true					= 0;		/* sector true flag for sector register read    */
+
+const static int32 alt_bootrom_dsk[BOOTROM_SIZE_DSK] = {  // boot ROM for mini disk support
+    0x21, 0x13, 0xff, 0x11, 0x00, 0x4c, 0x0e, 0xe3, /* ff00-ff07 */
+    0x7e, 0x12, 0x23, 0x13, 0x0d, 0xc2, 0x08, 0xff, /* ff08-ff0f */
+    0xc3, 0x00, 0x4c, 0xf3, 0xaf, 0xd3, 0x22, 0x2f, /* ff10-ff17 */
+    0xd3, 0x23, 0x3e, 0x2c, 0xd3, 0x22, 0x3e, 0x03, /* ff18-ff1f */
+    0xd3, 0x10, 0xdb, 0xff, 0xe6, 0x11, 0x0f, 0x0f, /* ff20-ff27 */
+    0xc6, 0x10, 0xd3, 0x10, 0x31, 0x71, 0x4d, 0xaf, /* ff28-ff2f */
+    0xd3, 0x08, 0xdb, 0x08, 0xe6, 0x08, 0xc2, 0x1c, /* ff30-ff37 */
+    0x4c, 0x3e, 0x04, 0xd3, 0x09, 0xc3, 0x38, 0x4c, /* ff38-ff3f */
+    0xdb, 0x08, 0xe6, 0x02, 0xc2, 0x2d, 0x4c, 0x3e, /* ff40-ff47 */
+    0x02, 0xd3, 0x09, 0xdb, 0x08, 0xe6, 0x40, 0xc2, /* ff48-ff4f */
+    0x2d, 0x4c, 0x11, 0x00, 0x00, 0x06, 0x00, 0x3e, /* ff50-ff57 */
+    0x10, 0xf5, 0xd5, 0xc5, 0xd5, 0x11, 0x86, 0x80, /* ff58-ff5f */
+    0x21, 0xe3, 0x4c, 0xdb, 0x09, 0x1f, 0xda, 0x50, /* ff60-ff67 */
+    0x4c, 0xe6, 0x1f, 0xb8, 0xc2, 0x50, 0x4c, 0xdb, /* ff68-ff6f */
+    0x08, 0xb7, 0xfa, 0x5c, 0x4c, 0xdb, 0x0a, 0x77, /* ff70-ff77 */
+    0x23, 0x1d, 0xc2, 0x5c, 0x4c, 0xe1, 0x11, 0xe6, /* ff78-ff7f */
+    0x4c, 0x01, 0x80, 0x00, 0x1a, 0x77, 0xbe, 0xc2, /* ff80-ff87 */
+    0xc3, 0x4c, 0x80, 0x47, 0x13, 0x23, 0x0d, 0xc2, /* ff88-ff8f */
+    0x71, 0x4c, 0x1a, 0xfe, 0xff, 0xc2, 0x88, 0x4c, /* ff90-ff97 */
+    0x13, 0x1a, 0xb8, 0xc1, 0xeb, 0xc2, 0xba, 0x4c, /* ff98-ff9f */
+    0xf1, 0xf1, 0x2a, 0xe4, 0x4c, 0xcd, 0xdd, 0x4c, /* ffa0-ffa7 */
+    0xd2, 0xb3, 0x4c, 0x04, 0x04, 0x78, 0xfe, 0x10, /* ffa8-ffaf */
+    0xda, 0x44, 0x4c, 0x06, 0x01, 0xca, 0x44, 0x4c, /* ffb0-ffb7 */
+    0xdb, 0x08, 0xe6, 0x02, 0xc2, 0xa5, 0x4c, 0x3e, /* ffb8-ffbf */
+    0x01, 0xd3, 0x09, 0xc3, 0x42, 0x4c, 0x3e, 0x80, /* ffc0-ffc7 */
+    0xd3, 0x08, 0xc3, 0x00, 0x00, 0xd1, 0xf1, 0x3d, /* ffc8-ffcf */
+    0xc2, 0x46, 0x4c, 0x3e, 0x43, 0x01, 0x3e, 0x4d, /* ffd0-ffd7 */
+    0xfb, 0x32, 0x00, 0x00, 0x22, 0x01, 0x00, 0x47, /* ffd8-ffdf */
+    0x3e, 0x80, 0xd3, 0x08, 0x78, 0xd3, 0x01, 0xd3, /* ffe0-ffe7 */
+    0x11, 0xd3, 0x05, 0xd3, 0x23, 0xc3, 0xd2, 0x4c, /* ffe8-ffef */
+    0x7a, 0xbc, 0xc0, 0x7b, 0xbd, 0xc9, 0x00, 0x00, /* fff0-fff7 */
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* fff8-ffff */
+};
 
 /* Altair MITS modified BOOT EPROM, fits in upper 256 byte of memory */
 int32 bootrom_dsk[BOOTROM_SIZE_DSK] = {
@@ -229,40 +296,62 @@ static UNIT dsk_unit[] = {
 };
 
 static REG dsk_reg[] = {
-    { DRDATA (DISK,         current_disk,   4)                                          },
-    { BRDATA (CURTRACK,     current_track,  10, 32, NUM_OF_DSK),    REG_CIRC + REG_RO   },
-    { BRDATA (CURSECTOR,    current_sector, 10, 32, NUM_OF_DSK),    REG_CIRC + REG_RO   },
-    { BRDATA (CURBYTE,      current_byte,   10, 32, NUM_OF_DSK),    REG_CIRC + REG_RO   },
-    { BRDATA (CURFLAG,      current_flag,   10, 32, NUM_OF_DSK),    REG_CIRC + REG_RO   },
-    { BRDATA (TRACKS,       tracks,         10, 8,  NUM_OF_DSK),    REG_CIRC            },
-    { DRDATA (IN9COUNT,     in9_count, 4),                          REG_RO              },
-    { DRDATA (IN9MESSAGE,   in9_message, 4),                        REG_RO              },
-    { DRDATA (DIRTY,        dirty, 4),                              REG_RO              },
-    { DRDATA (DSKWL,        warnLevelDSK, 32)                                           },
-    { BRDATA (WARNLOCK,     warnLock,       10, 32, NUM_OF_DSK),    REG_CIRC + REG_RO   },
-    { BRDATA (WARNATTACHED, warnAttached,   10, 32, NUM_OF_DSK),    REG_CIRC + REG_RO   },
-    { DRDATA (WARNDSK10,    warnDSK10, 4),                          REG_RO              },
-    { DRDATA (WARNDSK11,    warnDSK11, 4),                          REG_RO              },
-    { DRDATA (WARNDSK12,    warnDSK12, 4),                          REG_RO              },
-    { BRDATA (DISKBUFFER,   dskbuf,         10, 8,  DSK_SECTSIZE),  REG_CIRC + REG_RO   },
+    { DRDATAD (DISK,         current_disk,      4,
+               "Selected disk register"),                                                   },
+    { BRDATAD (CURTRACK,    current_track,      10, 32, NUM_OF_DSK,
+               "Selected track register array"), REG_CIRC + REG_RO                          },
+    { BRDATAD (CURSECTOR,   current_sector,     10, 32, NUM_OF_DSK,
+               "Selected sector register array"), REG_CIRC + REG_RO                         },
+    { BRDATAD (CURBYTE, current_byte,           10, 32, NUM_OF_DSK,
+               "Current byte register arrayr"), REG_CIRC + REG_RO                           },
+    { BRDATAD (CURFLAG, current_flag,           10, 32, NUM_OF_DSK,
+               "Current flag register array"), REG_CIRC + REG_RO                            },
+    { BRDATAD (TRACKS,      tracks,             10, 8,  NUM_OF_DSK,
+               "Number of tracks register array"),    REG_CIRC                              },
+    { BRDATAD (SECTPERTRACK,sectors_per_track,  10, 8,  NUM_OF_DSK,
+               "Number of sectors per track register array"), REG_CIRC                      },
+    { DRDATAD (IN9COUNT,     in9_count,         4,
+               "Count of IN(9) register"),  REG_RO                                          },
+    { DRDATAD (IN9MESSAGE,   in9_message,       4,
+               "BOOL for IN(9) message register"), REG_RO                                   },
+    { DRDATAD (DIRTY,        dirty,             4,
+               "BOOL for write needed register"), REG_RO                                    },
+    { DRDATAD (DSKWL,        warnLevelDSK,      32,
+               "Warn level register")                                                       },
+    { BRDATAD (WARNLOCK,     warnLock,          10, 32, NUM_OF_DSK,
+               "Count of write to locked register array"), REG_CIRC + REG_RO                },
+    { BRDATAD (WARNATTACHED, warnAttached,      10, 32, NUM_OF_DSK,
+               "Count for selection of unattached disk register array"), REG_CIRC + REG_RO  },
+    { DRDATAD (WARNDSK10,    warnDSK10,         4,
+               "Count of IN(8) on unattached disk register"), REG_RO                        },
+    { DRDATAD (WARNDSK11,    warnDSK11,         4,
+               "Count of IN/OUT(9) on unattached disk register"), REG_RO                    },
+    { DRDATAD (WARNDSK12,    warnDSK12,         4,
+               "Count of IN/OUT(10) on unattached disk register"), REG_RO                   },
+    { BRDATAD (DISKBUFFER,   dskbuf,            10, 8,  DSK_SECTSIZE,
+               "Disk data buffer array"), REG_CIRC + REG_RO                                 },
     { NULL }
 };
 
+#define DSK_NAME    "Altair Floppy Disk DSK"
+
 static MTAB dsk_mod[] = {
-    { UNIT_DSK_WLK,     0,                  "WRTENB",    "WRTENB",  NULL                },
-    { UNIT_DSK_WLK,     UNIT_DSK_WLK,       "WRTLCK",    "WRTLCK",  NULL                },
+    { UNIT_DSK_WLK,     0,                  "WRTENB",    "WRTENB",  NULL, NULL, NULL,
+        "Enables " DSK_NAME "n for writing" },
+    { UNIT_DSK_WLK,     UNIT_DSK_WLK,       "WRTLCK",    "WRTLCK",  NULL, NULL, NULL,
+        "Locks " DSK_NAME "n for writing" },
     { 0 }
 };
 
 /* Debug Flags */
 static DEBTAB dsk_dt[] = {
-    { "IN",             IN_MSG              },
-    { "OUT",            OUT_MSG             },
-    { "READ",           READ_MSG            },
-    { "WRITE",          WRITE_MSG           },
-    { "SECTOR_STUCK",   SECTOR_STUCK_MSG    },
-    { "TRACK_STUCK",    TRACK_STUCK_MSG     },
-    { "VERBOSE",        VERBOSE_MSG         },
+    { "IN",             IN_MSG,             "IN operations"     },
+    { "OUT",            OUT_MSG,            "OUT operations"    },
+    { "READ",           READ_MSG,           "Read operations"   },
+    { "WRITE",          WRITE_MSG,          "Write operations"  },
+    { "SECTOR_STUCK",   SECTOR_STUCK_MSG,   "Sector stuck"      },
+    { "TRACK_STUCK",    TRACK_STUCK_MSG,    "Track stuck"       },
+    { "VERBOSE",        VERBOSE_MSG,        "Verbose messages"  },
     { NULL,             0                   }
 };
 
@@ -270,9 +359,9 @@ DEVICE dsk_dev = {
     "DSK", dsk_unit, dsk_reg, dsk_mod,
     NUM_OF_DSK, 10, 31, 1, 8, 8,
     NULL, NULL, &dsk_reset,
-    &dsk_boot, NULL, NULL,
+    &dsk_boot, &dsk_attach, NULL,
     NULL, (DEV_DISABLE | DEV_DEBUG), 0,
-    dsk_dt, NULL, "Altair Floppy Disk DSK"
+    dsk_dt, NULL, DSK_NAME
 };
 
 static char* selectInOut(const int32 io) {
@@ -291,7 +380,6 @@ static t_stat dsk_reset(DEVICE *dptr) {
         current_sector[i] = 0;
         current_byte[i] = 0;
         current_flag[i] = 0;
-        tracks[i] = MAX_TRACKS;
     }
     warnDSK10       = 0;
     warnDSK11       = 0;
@@ -302,6 +390,28 @@ static t_stat dsk_reset(DEVICE *dptr) {
     sim_map_resource(0x08, 1, RESOURCE_TYPE_IO, &dsk10, dptr->flags & DEV_DIS);
     sim_map_resource(0x09, 1, RESOURCE_TYPE_IO, &dsk11, dptr->flags & DEV_DIS);
     sim_map_resource(0x0A, 1, RESOURCE_TYPE_IO, &dsk12, dptr->flags & DEV_DIS);
+    return SCPE_OK;
+}
+/* dsk_attach - determine type of drive attached based on disk image size */
+
+static t_stat dsk_attach(UNIT *uptr, char *cptr) {
+    int32 thisUnitIndex;
+	int32 imageSize;
+    const t_stat r = attach_unit(uptr, cptr);           /* attach unit  */
+    if (r != SCPE_OK)                                   /* error?       */
+        return r;
+    
+    assert(uptr != NULL);
+    thisUnitIndex = find_unit_index(uptr);
+    assert((0 <= thisUnitIndex) && (thisUnitIndex < NUM_OF_DSK));
+    
+    /*  If the file size is close to the mini-disk image size, set the number of
+     tracks to 16, otherwise, 32 sectors per track. */
+    
+	imageSize = sim_fsize(uptr -> fileref);
+    sectors_per_track[thisUnitIndex] = (((MINI_DISK_SIZE - MINI_DISK_DELTA < imageSize) &&
+                                         (imageSize < MINI_DISK_SIZE + MINI_DISK_DELTA)) ?
+                                        MINI_DISK_SECT : DSK_SECT);
     return SCPE_OK;
 }
 
@@ -316,23 +426,30 @@ void install_ALTAIRbootROM(void) {
 */
 static t_stat dsk_boot(int32 unitno, DEVICE *dptr) {
     if (cpu_unit.flags & (UNIT_CPU_ALTAIRROM | UNIT_CPU_BANKED)) {
+        if (sectors_per_track[unitno] == MINI_DISK_SECT) {
+            const t_bool result = (install_bootrom(alt_bootrom_dsk, BOOTROM_SIZE_DSK,
+                                                   ALTAIR_ROM_LOW, TRUE) == SCPE_OK);
+            assert(result);
+        } else {
         /* check whether we are really modifying an LD A,<> instruction */
-        if ((bootrom_dsk[UNIT_NO_OFFSET_1 - 1] == LDA_INSTRUCTION) && (bootrom_dsk[UNIT_NO_OFFSET_2 - 1] == LDA_INSTRUCTION)) {
+            if ((bootrom_dsk[UNIT_NO_OFFSET_1 - 1] == LDA_INSTRUCTION) &&
+                (bootrom_dsk[UNIT_NO_OFFSET_2 - 1] == LDA_INSTRUCTION)) {
             bootrom_dsk[UNIT_NO_OFFSET_1] = unitno & 0xff;             /* LD A,<unitno>        */
             bootrom_dsk[UNIT_NO_OFFSET_2] = 0x80 | (unitno & 0xff);    /* LD a,80h | <unitno>  */
         }
         else { /* Attempt to modify non LD A,<> instructions is refused. */
-            printf("Incorrect boot ROM offsets detected.\n");
+                sim_printf("Incorrect boot ROM offsets detected.\n");
             return SCPE_IERR;
         }
         install_ALTAIRbootROM();                                         /* install modified ROM */
+    }
     }
     *((int32 *) sim_PC->loc) = ALTAIR_ROM_LOW;
     return SCPE_OK;
 }
 
 static int32 dskseek(const UNIT *xptr) {
-    return sim_fseek(xptr -> fileref, DSK_TRACSIZE * current_track[current_disk] +
+    return sim_fseek(xptr -> fileref, DSK_SECTSIZE * sectors_per_track[current_disk] * current_track[current_disk] +
         DSK_SECTSIZE * current_sector[current_disk], SEEK_SET);
 }
 
@@ -430,9 +547,15 @@ int32 dsk10(const int32 port, const int32 io, const int32 data) {
     else {
         current_sector[current_disk]    = 0xff; /* reset internal counters */
         current_byte[current_disk]      = 0xff;
-        current_flag[current_disk]      = data & 0x80   ?   0       /* disable drive                            */ :
-        (current_track[current_disk] == 0           ?   0x5a    /* enable: head move true, track 0 if there */ :
-         0x1a);  /* enable: head move true                   */
+		if (data & 0x80)                            /* disable drive? */
+			current_flag[current_disk] = 0;         /* yes, clear all flags */
+		else {                                      /* enable drive */
+			current_flag[current_disk] = 0x1a;      /* move head true */
+			if (current_track[current_disk] == 0)   /* track 0? */
+				current_flag[current_disk] |= 0x40; /* yes, set track 0 true as well */
+			if (sectors_per_track[current_disk] == MINI_DISK_SECT)  /* drive enable loads head for Minidisk */
+				current_flag[current_disk] |= 0x84;  
+		}
     }
     return 0;   /* ignored since OUT */
 }
@@ -448,7 +571,7 @@ int32 dsk11(const int32 port, const int32 io, const int32 data) {
                       " Attempt of %s 0x09 on unattached disk - ignored.\n",
                       current_disk, PCX, selectInOut(io));
         }
-        return 0;               /* no drive selected - can do nothing */
+        return 0xff;               /* no drive selected - can do nothing */
     }
 
     /* now current_disk < NUM_OF_DSK */
@@ -458,20 +581,23 @@ int32 dsk11(const int32 port, const int32 io, const int32 data) {
             in9_message = TRUE;
             sim_debug(SECTOR_STUCK_MSG, &dsk_dev,
                       "DSK%i: " ADDRESS_FORMAT " Looping on sector find.\n",
-                   current_disk, PCX);
+                      current_disk, PCX);
         }
         sim_debug(IN_MSG, &dsk_dev, "DSK%i: " ADDRESS_FORMAT " IN 0x09\n", current_disk, PCX);
         if (dirty)  /* implies that current_disk < NUM_OF_DSK */
             writebuf();
         if (current_flag[current_disk] & 0x04) {    /* head loaded? */
-            current_sector[current_disk]++;
-            if (current_sector[current_disk] >= DSK_SECT)
-                current_sector[current_disk] = 0;
-            current_byte[current_disk] = 0xff;
-            return (((current_sector[current_disk] << 1) & 0x3e)    /* return 'sector true' bit = 0 (true) */
-                    | 0xc0);                                            /* set on 'unused' bits */
+			sector_true ^= 1;						/* return sector true every other entry */
+			if (sector_true == 0) {					/* true when zero */
+                current_sector[current_disk]++;
+                if (current_sector[current_disk] >= sectors_per_track[current_disk])
+                    current_sector[current_disk] = 0;
+                current_byte[current_disk] = 0xff;
+			}
+            return (((current_sector[current_disk] << 1) & 0x3e)    /* return sector number and...) */
+                    | 0xc0 | sector_true);                          /* sector true, and set 'unused' bits */
         } else
-            return 0;                                               /* head not loaded - return 0 */
+            return 0xff;                                            /* head not loaded - return 0xff */
     }
 
     in9_count = 0;
@@ -519,7 +645,7 @@ int32 dsk11(const int32 port, const int32 io, const int32 data) {
         current_flag[current_disk] |= 0x80;         /* turn on 'read data available'    */
     }
 
-    if (data & 0x08) {                              /* head unload                      */
+    if ((data & 0x08) && (sectors_per_track[current_disk] != MINI_DISK_SECT)) { /* head unload */
         current_flag[current_disk]      &= 0xfb;    /* turn off 'head loaded'   bit     */
         current_flag[current_disk]      &= 0x7f;    /* turn off 'read data available'   */
         current_sector[current_disk]    = 0xff;

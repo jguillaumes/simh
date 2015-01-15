@@ -374,10 +374,10 @@ t_offset capac = ((t_offset)uptr->capac)*((dptr->flags & DEV_SECTORS) ? 512 : 1)
 if (ctx->capac_factor == 2)
     cap_units = "W";
 if (capac) {
-    if (capac >= (t_addr) 1000000)
-        fprintf (st, "capacity=%dM%s", (uint32) (capac / ((t_addr) 1000000)), cap_units);
+    if (capac >= (t_offset) 1000000)
+        fprintf (st, "capacity=%dM%s", (uint32) (capac / ((t_offset) 1000000)), cap_units);
     else if (uptr->capac >= (t_addr) 1000)
-        fprintf (st, "capacity=%dK%s", (uint32) (capac / ((t_addr) 1000)), cap_units);
+        fprintf (st, "capacity=%dK%s", (uint32) (capac / ((t_offset) 1000)), cap_units);
     else fprintf (st, "capacity=%d%s", (uint32) capac, cap_units);
     }
 else fprintf (st, "undefined capacity");
@@ -1455,40 +1455,11 @@ void sim_disk_data_trace(UNIT *uptr, const uint8 *data, size_t lba, size_t len, 
 {
 struct disk_context *ctx = (struct disk_context *)uptr->disk_ctx;
 
-if (ctx->dptr->dctrl & reason) {
-    sim_debug (reason, ctx->dptr, "%s%d %s lbn: %08X len: %08X\n", ctx->dptr->name, (int)(uptr-ctx->dptr->units), txt, lba, len);
-    if (detail) {
-        size_t i, same, group, sidx, oidx;
-        char outbuf[80], strbuf[18];
-        static char hex[] = "0123456789ABCDEF";
+if (sim_deb && (ctx->dptr->dctrl & reason)) {
+    char pos[32];
 
-        for (i=same=0; i<len; i += 16) {
-            if ((i > 0) && (0 == memcmp (&data[i], &data[i-16], 16))) {
-                ++same;
-                continue;
-                }
-            if (same > 0) {
-                sim_debug (reason, ctx->dptr, "%04X thru %04X same as above\n", i-(16*same), i-1);
-                same = 0;
-                }
-            group = (((len - i) > 16) ? 16 : (len - i));
-            for (sidx=oidx=0; sidx<group; ++sidx) {
-                outbuf[oidx++] = ' ';
-                outbuf[oidx++] = hex[(data[i+sidx]>>4)&0xf];
-                outbuf[oidx++] = hex[data[i+sidx]&0xf];
-                if (isprint (data[i+sidx]))
-                    strbuf[sidx] = data[i+sidx];
-                else
-                    strbuf[sidx] = '.';
-                }
-            outbuf[oidx] = '\0';
-            strbuf[sidx] = '\0';
-            sim_debug (reason, ctx->dptr, "%04X%-48s %s\n", i, outbuf, strbuf);
-            }
-        if (same > 0) {
-            sim_debug (reason, ctx->dptr, "%04X thru %04X same as above\n", i-(16*same), len-1);
-            }
-        }
+    sprintf (pos, "lbn: %08X ", (unsigned int)lba);
+    sim_data_trace(ctx->dptr, uptr, (detail ? data : NULL), pos, len, txt, reason);
     }
 }
 
@@ -1825,7 +1796,7 @@ if (DeviceIoControl((HANDLE)Disk,                      /* handle to volume */
                      (DWORD) sizeof(Device),           /* size of output buffer */
                      (LPDWORD) &IoctlReturnSize,       /* number of bytes returned */
                      (LPOVERLAPPED) NULL))             /* OVERLAPPED structure */
-     printf ("Device OK - Type: %s, Number: %d\n", _device_type_name (Device.DeviceType), (int)Device.DeviceNumber);
+     sim_printf ("Device OK - Type: %s, Number: %d\n", _device_type_name (Device.DeviceType), (int)Device.DeviceNumber);
 
 if (sector_size)
     *sector_size = 512;
@@ -1900,7 +1871,7 @@ if (1) {
     }
 #endif
 if (removable && *removable)
-    printf ("Removable Device\n");
+    sim_printf ("Removable Device\n");
 return SCPE_OK;
 }
 
@@ -3821,20 +3792,25 @@ while (sects) {
                               NULL,
                               BlockOffset))
             goto Fatal_IO_Error;
-        /* Write just the aligned sector which contains the updated BAT entry */
-        BATUpdateBufferAddress = (uint8 *)hVHD->BAT - (size_t)NtoHll(hVHD->Dynamic.TableOffset) +
-            (size_t)((((size_t)&hVHD->BAT[BlockNumber+1]) - (size_t)hVHD->BAT + (size_t)NtoHll(hVHD->Dynamic.TableOffset)) & ~(VHD_DATA_BLOCK_ALIGNMENT-1));
+        /* Since a large VHD can have a pretty large BAT, and we've only changed one longword bat entry
+           in the current BAT, we write just the aligned sector which contains the updated BAT entry */
+        BATUpdateBufferAddress = (uint8 *)hVHD->BAT - (size_t)NtoHll(hVHD->Dynamic.TableOffset) + 
+            (size_t)((((size_t)&hVHD->BAT[BlockNumber]) - (size_t)hVHD->BAT + (size_t)NtoHll(hVHD->Dynamic.TableOffset)) & ~(VHD_DATA_BLOCK_ALIGNMENT-1));
+        /* If the starting of the BAT isn't on a VHD_DATA_BLOCK_ALIGNMENT boundary and we've just updated 
+           a BAT entry early in the array, the buffer computed address might be before the start of the
+           BAT table.  If so, only write the BAT data needed */
         if (BATUpdateBufferAddress < (uint8 *)hVHD->BAT) {
             BATUpdateBufferAddress = (uint8 *)hVHD->BAT;
-            BATUpdateBufferSize = (((((size_t)&hVHD->BAT[BlockNumber+1]) - (size_t)hVHD->BAT) + 511)/512)*512;
+            BATUpdateBufferSize = (uint32)((((size_t)&hVHD->BAT[BlockNumber]) - (size_t)hVHD->BAT) + 512) & ~511;
             BATUpdateStorageAddress = NtoHll(hVHD->Dynamic.TableOffset);
             }
         else {
             BATUpdateBufferSize = VHD_DATA_BLOCK_ALIGNMENT;
             BATUpdateStorageAddress = NtoHll(hVHD->Dynamic.TableOffset) + BATUpdateBufferAddress - ((uint8 *)hVHD->BAT);
             }
+        /* If the total BAT is smaller than one VHD_DATA_BLOCK_ALIGNMENT, then be sure to only write out the BAT data */
         if ((size_t)(BATUpdateBufferAddress - (uint8 *)hVHD->BAT + BATUpdateBufferSize) > 512*((sizeof(*hVHD->BAT)*NtoHl(hVHD->Dynamic.MaxTableEntries) + 511)/512))
-            BATUpdateBufferSize = 512*((sizeof(*hVHD->BAT)*NtoHl(hVHD->Dynamic.MaxTableEntries) + 511)/512) - (BATUpdateBufferAddress - ((uint8 *)hVHD->BAT));
+            BATUpdateBufferSize = (uint32)(512*((sizeof(*hVHD->BAT)*NtoHl(hVHD->Dynamic.MaxTableEntries) + 511)/512) - (BATUpdateBufferAddress - ((uint8 *)hVHD->BAT)));
         if (WriteFilePosition(hVHD->File,
                               BATUpdateBufferAddress,
                               BATUpdateBufferSize,

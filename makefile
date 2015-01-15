@@ -10,6 +10,7 @@
 #   AIX
 #   Windows (MinGW & cygwin)
 #   Linux x86 targeting Android (using agcc script)
+#   Haiku x86 (with gcc4)
 #
 # Android targeted builds should invoke GNU make with GCC=agcc on
 # the command line.
@@ -65,19 +66,31 @@ ifneq (,$(or $(findstring pdp11,$(MAKECMDGOALS)),$(findstring vax,$(MAKECMDGOALS
   ifneq (,$(findstring all,$(MAKECMDGOALS))$(word 2,$(MAKECMDGOALS)))
     BUILD_MULTIPLE = s
     VIDEO_USEFUL = true
+    DISPLAY_USEFUL = true
   endif
 else
   ifeq ($(MAKECMDGOALS),)
     # default target is all
     NETWORK_USEFUL = true
     VIDEO_USEFUL = true
+    DISPLAY_USEFUL = true
     BUILD_MULTIPLE = s
     BUILD_SINGLE := all $(BUILD_SINGLE)
+  else
+    ifneq (,$(or $(or $(findstring pdp1,$(MAKECMDGOALS)),$(findstring pdp11,$(MAKECMDGOALS))),$(findstring tx-0,$(MAKECMDGOALS))))
+      DISPLAY_USEFUL = true
+    endif
   endif
 endif
 ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
   ifeq ($(GCC),)
-    GCC = gcc
+    ifeq (,$(shell which gcc 2>/dev/null))
+      $(info *** Warning *** Using local cc since gcc isn't available locally.)
+      $(info *** Warning *** You may need to install gcc to build working simulators.)
+      GCC = cc
+    else
+      GCC = gcc
+    endif
   endif
   OSTYPE = $(shell uname)
   # OSNAME is used in messages to indicate the source of libpcap components
@@ -201,25 +214,39 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
                 OS_LDFLAGS += -L/opt/freeware/lib
               endif
             else
-              ifeq (,$(findstring NetBSD,$(OSTYPE)))
-                ifneq (no ldconfig,$(findstring no ldconfig,$(shell which ldconfig 2>&1)))
-                  LDSEARCH :=$(shell ldconfig -r | grep 'search directories' | awk '{print $$3}' | sed 's/:/ /g')
+              ifneq (,$(findstring Haiku,$(OSTYPE)))
+                HAIKU_ARCH=$(shell getarch)
+                ifeq ($(HAIKU_ARCH),)
+                  $(error Missing getarch command, your Haiku release is probably too old)
                 endif
-                ifneq (,$(LDSEARCH))
-                  LIBPATH := $(LDSEARCH)
-                else
-                  ifeq (,$(strip $(LPATH)))
-                    $(info *** Warning ***)
-                    $(info *** Warning *** The library search path on your $(OSTYPE) platform can't be)
-                    $(info *** Warning *** determined.  This should be resolved before you can expect)
-                    $(info *** Warning *** to have fully working simulators.)
-                    $(info *** Warning ***)
-                    $(info *** Warning *** You can specify your library paths via the LPATH environment)
-                    $(info *** Warning *** variable.)
-                    $(info *** Warning ***)
+                ifeq ($(HAIKU_ARCH),x86_gcc2)
+                  $(error Unsupported arch x86_gcc2. Run setarch x86 and retry)
+                endif
+                INCPATH := $(shell findpaths -e -a $(HAIKU_ARCH) B_FIND_PATH_HEADERS_DIRECTORY)
+                INCPATH += $(shell findpaths -e B_FIND_PATH_HEADERS_DIRECTORY posix)
+                LIBPATH := $(shell findpaths -e -a $(HAIKU_ARCH) B_FIND_PATH_DEVELOP_LIB_DIRECTORY)
+                OS_LDFLAGS += -lnetwork
+              else
+                ifeq (,$(findstring NetBSD,$(OSTYPE)))
+                  ifneq (no ldconfig,$(findstring no ldconfig,$(shell which ldconfig 2>&1)))
+                    LDSEARCH :=$(shell ldconfig -r | grep 'search directories' | awk '{print $$3}' | sed 's/:/ /g')
+                  endif
+                  ifneq (,$(LDSEARCH))
+                    LIBPATH := $(LDSEARCH)
                   else
-                    LIBPATH = $(subst :, ,$(LPATH))
-                    OS_LDFLAGS += $(patsubst %,-L%,$(LIBPATH))
+                    ifeq (,$(strip $(LPATH)))
+                      $(info *** Warning ***)
+                      $(info *** Warning *** The library search path on your $(OSTYPE) platform can't be)
+                      $(info *** Warning *** determined.  This should be resolved before you can expect)
+                      $(info *** Warning *** to have fully working simulators.)
+                      $(info *** Warning ***)
+                      $(info *** Warning *** You can specify your library paths via the LPATH environment)
+                      $(info *** Warning *** variable.)
+                      $(info *** Warning ***)
+                    else
+                      LIBPATH = $(subst :, ,$(LPATH))
+                      OS_LDFLAGS += $(patsubst %,-L%,$(LIBPATH))
+                    endif
                   endif
                 endif
               endif
@@ -228,6 +255,13 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
               LIBPATH += /usr/pkg/lib
               INCPATH += /usr/pkg/include
               OS_LDFLAGS += -L/usr/pkg/lib -R/usr/pkg/lib
+              OS_CCDEFS += -I/usr/pkg/include
+            endif
+            ifeq (X11R7,$(shell if $(TEST) -d /usr/X11R7/lib; then echo X11R7; fi))
+              LIBPATH += /usr/X11R7/lib
+              INCPATH += /usr/X11R7/include
+              OS_LDFLAGS += -L/X11R7/pkg/lib -R/usr/X11R7/lib
+              OS_CCDEFS += -I/usr/X11R7/include
             endif
             ifeq (/usr/local/lib,$(findstring /usr/local/lib,$(LIBPATH)))
               INCPATH += /usr/local/include
@@ -266,6 +300,8 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
   $(info include paths are: $(INCPATH))
   find_lib = $(strip $(firstword $(foreach dir,$(strip $(LIBPATH)),$(wildcard $(dir)/lib$(1).$(LIBEXT)))))
   find_include = $(strip $(firstword $(foreach dir,$(strip $(INCPATH)),$(wildcard $(dir)/$(1).h))))
+  need_search = $(strip $(shell ld -l$(1) /dev/null 2>&1 | grep $(1) | sed s/$(1)//))
+  LD_SEARCH_NEEDED := $(call need_search,ZzzzzzzZ)
   ifneq (,$(call find_lib,m))
     OS_LDFLAGS += -lm
     $(info using libm: $(call find_lib,m))
@@ -292,8 +328,36 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
         endif
         OS_LDFLAGS += -lpthread
         $(info using libpthread: $(call find_lib,pthread) $(call find_include,pthread))
+      else
+        ifneq (,$(findstring Haiku,$(OSTYPE)))
+          OS_CCDEFS += -DUSE_READER_THREAD
+          ifeq (,$(NOASYNCH))
+            OS_CCDEFS += -DSIM_ASYNCH_IO 
+          endif
+          $(info using libpthread: $(call find_include,pthread))
+        endif
       endif
       LIBEXT = $(LIBEXTSAVE)        
+    endif
+  endif
+  # Find available RegEx library.  Prefer libpcreposix.
+  ifneq (,$(call find_include,pcreposix))
+    ifneq (,$(call find_lib,pcreposix))
+      OS_CCDEFS += -DHAVE_PCREPOSIX_H
+      OS_LDFLAGS += -lpcreposix
+      $(info using libpcreposix: $(call find_lib,pcreposix) $(call find_include,pcreposix))
+      ifeq ($(LD_SEARCH_NEEDED),$(call need_search,pcreposix))
+        OS_LDFLAGS += -L$(dir $(call find_lib,pcreposix))
+      endif
+    endif
+  else
+    # If libpcreposix isn't available, fall back to the local regex.h 
+    # Presume that the local regex support is available in the C runtime 
+    # without a specific reference to a library.  This may not be true on
+    # some platforms.
+    ifneq (,$(call find_include,regex))
+      OS_CCDEFS += -DHAVE_REGEX_H
+      $(info using regex: $(call find_include,regex))
     endif
   endif
   ifneq (,$(call find_include,dlfcn))
@@ -302,7 +366,7 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
       OS_LDFLAGS += -ldl
       $(info using libdl: $(call find_lib,dl) $(call find_include,dlfcn))
     else
-      ifneq (,$(findstring BSD,$(OSTYPE))$(findstring AIX,$(OSTYPE)))
+      ifneq (,$(findstring BSD,$(OSTYPE))$(findstring AIX,$(OSTYPE))$(findstring Haiku,$(OSTYPE)))
         OS_CCDEFS += -DHAVE_DLOPEN=so
         $(info using libdl: $(call find_include,dlfcn))
       else
@@ -324,35 +388,56 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
   ifneq (,$(VIDEO_USEFUL))
     ifneq (,$(call find_include,SDL2/SDL))
       ifneq (,$(call find_lib,SDL2))
-        OS_CCDEFS += -DHAVE_LIBSDL -I$(dir $(call find_include,SDL2/SDL))
-        OS_LDFLAGS += -lSDL2
+        VIDEO_CCDEFS += -DHAVE_LIBSDL -I$(dir $(call find_include,SDL2/SDL))
+        VIDEO_LDFLAGS += -lSDL2
         VIDEO_FEATURES = - video capabilities provided by libSDL2 (Simple Directmedia Layer)
         $(info using libSDL2: $(call find_lib,SDL2) $(call find_include,SDL2/SDL))
         ifeq (Darwin,$(OSTYPE))
-          OS_LDFLAGS += -lobjc -framework cocoa
+          VIDEO_LDFLAGS += -lobjc -framework cocoa
         endif
       endif
     else
       ifneq (,$(call find_include,SDL/SDL))
         ifneq (,$(call find_lib,SDL))
-          OS_CCDEFS += -DHAVE_LIBSDL -I$(dir $(call find_include,SDL/SDL))
-          OS_LDFLAGS += -lSDL
+          VIDEO_CCDEFS += -DHAVE_LIBSDL -I$(dir $(call find_include,SDL/SDL))
+          VIDEO_LDFLAGS += -lSDL
           VIDEO_FEATURES = - video capabilities provided by libSDL (Simple Directmedia Layer)
           $(info using libSDL: $(call find_lib,SDL) $(call find_include,SDL/SDL))
           ifeq (Darwin,$(OSTYPE))
-            OS_LDFLAGS += -lobjc -framework cocoa
+            VIDEO_LDFLAGS += -lobjc -framework cocoa
           endif
         endif
       endif
     endif
-    ifeq (,$(findstring HAVE_LIBSDL,$(OS_CCDEFS)))
-      $(info *** Warning ***)
-      $(info *** Warning *** The simulator$(BUILD_MULTIPLE) you are building could provide more)
-      $(info *** Warning *** functionality if video support were available on your system.)
-      $(info *** Warning *** Install the development components of libSDL packaged by your)
-      $(info *** Warning *** operating system distribution and rebuild your simulator to)
-      $(info *** Warning *** enable this extra functionality.)
-      $(info *** Warning ***)
+    ifeq (,$(findstring HAVE_LIBSDL,$(VIDEO_CCDEFS)))
+      $(info *** Info ***)
+      $(info *** Info *** The simulator$(BUILD_MULTIPLE) you are building could provide more)
+      $(info *** Info *** functionality if video support were available on your system.)
+      $(info *** Info *** Install the development components of libSDL packaged by your)
+      $(info *** Info *** operating system distribution and rebuild your simulator to)
+      $(info *** Info *** enable this extra functionality.)
+      $(info *** Info ***)
+    endif
+  endif
+  ifneq (,$(DISPLAY_USEFUL))
+    ifeq (,$(WIN32))
+      ifneq (,$(call find_include,X11/Intrinsic))
+        ifneq (,$(call find_lib,Xt))
+          DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/x11.c
+          DISPLAYVT = ${DISPLAYD}/vt11.c
+          DISPLAY_OPT += -DUSE_DISPLAY -I$(dir $(call find_include,X11/Intrinsic))/include -lXt -lX11 -lm
+          $(info using display: $(call find_lib,Xt) $(call find_include,X11/Intrinsic))
+        endif
+        ifneq (,$(GCC_WARNINGS_CMD)$(CLANG_VERSION))
+          ifneq (,$(CLANG_VERSION)$(findstring -Wdeprecated-declarations,$(shell $(GCC_WARNINGS_CMD))))
+            DISPLAY_OPT += -Wno-deprecated-declarations
+          endif
+        endif
+      endif
+    else
+      DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/win32.c
+      DISPLAYVT = ${DISPLAYD}/vt11.c
+      DISPLAY_OPT = -DUSE_DISPLAY -lgdi32
     endif
   endif
   ifneq (,$(NETWORK_USEFUL))
@@ -370,13 +455,24 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
       ifneq (,$(call find_lib,$(PCAPLIB)))
         ifneq ($(USE_NETWORK),) # Network support specified on the GNU make command line
           NETWORK_CCDEFS += -DUSE_NETWORK
-          $(info *** Warning ***)
-          $(info *** Warning *** Statically linking against libpcap is provides no measurable)
-          $(info *** Warning *** benefits over dynamically linking libpcap.)
-          $(info *** Warning ***)
-          $(info *** Warning *** Support for linking this way is currently deprecated and may be removed)
-          $(info *** Warning *** in the future.)
-          $(info *** Warning ***)
+          ifeq (,$(findstring Linux,$(OSTYPE))$(findstring Darwin,$(OSTYPE)))
+            $(info *** Warning ***)
+            $(info *** Warning *** Statically linking against libpcap is provides no measurable)
+            $(info *** Warning *** benefits over dynamically linking libpcap.)
+            $(info *** Warning ***)
+            $(info *** Warning *** Support for linking this way is currently deprecated and may be removed)
+            $(info *** Warning *** in the future.)
+            $(info *** Warning ***)
+          else
+            $(info *** Error ***)
+            $(info *** Error *** Statically linking against libpcap is provides no measurable)
+            $(info *** Error *** benefits over dynamically linking libpcap.)
+            $(info *** Error ***)
+            $(info *** Error *** Support for linking statically has been removed on the $(OSTYPE))
+            $(info *** Error *** platform.)
+            $(info *** Error ***)
+            $(error Retry your build without specifying USE_NETWORK=1)
+          endif
           ifeq (cygwin,$(OSTYPE))
             # cygwin has no ldconfig so explicitly specify pcap object library
             NETWORK_LDFLAGS = -L$(dir $(call find_lib,$(PCAPLIB))) -Wl,-R,$(dir $(call find_lib,$(PCAPLIB))) -l$(PCAPLIB)
@@ -491,19 +587,19 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
       # Support is available on Linux for libvdeplug.  Advise on its usage
       ifneq (,$(findstring Linux,$(OSTYPE)))
         ifneq (,$(findstring USE_NETWORK,$(NETWORK_CCDEFS))$(findstring USE_SHARED,$(NETWORK_CCDEFS)))
-          $(info *** Warning ***)
-          $(info *** Warning *** $(BUILD_SINGLE)Simulator$(BUILD_MULTIPLE) are being built with)
-          $(info *** Warning *** minimal libpcap networking support)
-          $(info *** Warning ***)
+          $(info *** Info ***)
+          $(info *** Info *** $(BUILD_SINGLE)Simulator$(BUILD_MULTIPLE) are being built with)
+          $(info *** Info *** minimal libpcap networking support)
+          $(info *** Info ***)
         endif
-        $(info *** Warning *** Simulators on your $(OSNAME) platform can also be built with)
-        $(info *** Warning *** extended LAN Ethernet networking support by using VDE Ethernet.)
-        $(info *** Warning ***)
-        $(info *** Warning *** To build simulator(s) with extended networking support you)
-        $(info *** Warning *** should read 0readme_ethernet.txt and follow the instructions)
-        $(info *** Warning *** regarding the needed libvdeplug components for your $(OSNAME))
-        $(info *** Warning *** platform)
-        $(info *** Warning ***)
+        $(info *** Info *** Simulators on your $(OSNAME) platform can also be built with)
+        $(info *** Info *** extended LAN Ethernet networking support by using VDE Ethernet.)
+        $(info *** Info ***)
+        $(info *** Info *** To build simulator(s) with extended networking support you)
+        $(info *** Info *** should read 0readme_ethernet.txt and follow the instructions)
+        $(info *** Info *** regarding the needed libvdeplug components for your $(OSNAME))
+        $(info *** Info *** platform)
+        $(info *** Info ***)
       endif
     endif
     ifneq (,$(call find_include,linux/if_tun))
@@ -587,8 +683,8 @@ else
   endif
   ifneq (,$(VIDEO_USEFUL))
     ifeq (libSDL,$(shell if exist ..\windows-build\libSDL\SDL2-2.0.0\include\SDL.h echo libSDL))
-      OS_CCDEFS += -DHAVE_LIBSDL -I..\windows-build\libSDL\SDL2-2.0.0\include
-      OS_LDFLAGS += -lSDL2 -L..\windows-build\libSDL\SDL2-2.0.0\lib
+      VIDEO_CCDEFS += -DHAVE_LIBSDL -I..\windows-build\libSDL\SDL2-2.0.0\include
+      VIDEO_LDFLAGS  += -lSDL2 -L..\windows-build\libSDL\SDL2-2.0.0\lib
       VIDEO_FEATURES = - video capabilities provided by libSDL2 (Simple Directmedia Layer)
     else
       $(info ***********************************************************************)
@@ -621,7 +717,22 @@ else
       GIT_COMMIT_ID=$(shell for /F "tokens=3" %%i in ("$(shell findstr /C:"define SIM_GIT_COMMIT_ID" sim_rev.h)") do echo %%i)
     endif
   endif
-endif
+  ifneq (windows-build,$(shell if exist ..\windows-build\README.md echo windows-build))
+    $(info ***********************************************************************)
+    $(info ***********************************************************************)
+    $(info **  This build is operating without the required windows-build       **)
+    $(info **  components and therefore will produce less than optimal          **)
+    $(info **  simulator operation and features.                                **)
+    $(info **  Download the file:                                               **)
+    $(info **  https://github.com/simh/windows-build/archive/windows-build.zip  **)
+    $(info **  Refer to the file:                                               **)
+    $(info **  "Visual Studio Projects\0ReadMe_Projects.txt" for where to place **)
+    $(info **  the 'windows-build' folder extracted from that zip file.         **)
+    $(info ***********************************************************************)
+    $(info ***********************************************************************)
+    $(info .)
+  endif
+endif # Win32 (via MinGW)
 ifneq (,$(GIT_COMMIT_ID))
   CFLAGS_GIT = -DSIM_GIT_COMMIT_ID=$(GIT_COMMIT_ID)
 endif
@@ -730,24 +841,9 @@ LDFLAGS := $(OS_LDFLAGS) $(NETWORK_LDFLAGS) $(LDFLAGS_O)
 BIN = BIN/
 SIM = scp.c sim_console.c sim_fio.c sim_timer.c sim_sock.c \
 	sim_tmxr.c sim_ether.c sim_tape.c sim_disk.c sim_serial.c \
-	sim_video.c
+	sim_video.c sim_imd.c
 
 DISPLAYD = display
-ifeq ($(WIN32),)
-  ifeq (x11,$(shell if $(TEST) -e /usr/include/X11/Intrinsic.h ; then echo x11; fi))
-    DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/x11.c
-    DISPLAYVT = ${DISPLAYD}/vt11.c
-    DISPLAY_OPT = -DUSE_DISPLAY -I/usr/X11/include -lXt -lX11 -lm
-  else
-    DISPLAYL = 
-    DISPLAYVT =
-    DISPLAY_OPT = 
-  endif
-else
-  DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/win32.c
-  DISPLAYVT = ${DISPLAYD}/vt11.c
-  DISPLAY_OPT = -DUSE_DISPLAY -lgdi32
-endif  
   
 #
 # Emulator source files and compile time options
@@ -826,7 +922,7 @@ VAX610 = ${VAXD}/vax_cpu.c ${VAXD}/vax_cpu1.c ${VAXD}/vax_fpa.c \
 	${PDP11D}/pdp11_dz.c ${PDP11D}/pdp11_lp.c ${PDP11D}/pdp11_tq.c \
 	${PDP11D}/pdp11_xq.c ${PDP11D}/pdp11_vh.c ${PDP11D}/pdp11_cr.c \
 	${PDP11D}/pdp11_io_lib.c
-VAX610_OPT = -DVM_VAX -DVAX_610 -DUSE_INT64 -DUSE_ADDR64 -DUSE_SIM_VIDEO -I ${VAXD} -I ${PDP11D} ${NETWORK_OPT}
+VAX610_OPT = -DVM_VAX -DVAX_610 -DUSE_INT64 -DUSE_ADDR64 -DUSE_SIM_VIDEO -I ${VAXD} -I ${PDP11D} ${NETWORK_OPT} ${VIDEO_CCDEFS} ${VIDEO_LDFLAGS}
 
 VAX630 = ${VAXD}/vax_cpu.c ${VAXD}/vax_cpu1.c ${VAXD}/vax_fpa.c \
 	${VAXD}/vax_cis.c ${VAXD}/vax_octa.c ${VAXD}/vax_cmode.c \
@@ -839,7 +935,7 @@ VAX630 = ${VAXD}/vax_cpu.c ${VAXD}/vax_cpu1.c ${VAXD}/vax_fpa.c \
 	${PDP11D}/pdp11_xq.c ${PDP11D}/pdp11_vh.c ${PDP11D}/pdp11_cr.c \
 	${PDP11D}/pdp11_io_lib.c
 VAX620_OPT = -DVM_VAX -DVAX_620 -DUSE_INT64 -DUSE_ADDR64 -I ${VAXD} -I ${PDP11D} ${NETWORK_OPT}
-VAX630_OPT = -DVM_VAX -DVAX_630 -DUSE_INT64 -DUSE_ADDR64 -DUSE_SIM_VIDEO -I ${VAXD} -I ${PDP11D} ${NETWORK_OPT}
+VAX630_OPT = -DVM_VAX -DVAX_630 -DUSE_INT64 -DUSE_ADDR64 -DUSE_SIM_VIDEO -I ${VAXD} -I ${PDP11D} ${NETWORK_OPT} ${VIDEO_CCDEFS} ${VIDEO_LDFLAGS}
 
 
 VAX730 = ${VAXD}/vax_cpu.c ${VAXD}/vax_cpu1.c ${VAXD}/vax_fpa.c \
@@ -1020,10 +1116,13 @@ ALTAIRZ80 = ${ALTAIRZ80D}/altairz80_cpu.c ${ALTAIRZ80D}/altairz80_cpu_nommu.c \
 	${ALTAIRZ80D}/s100_fif.c ${ALTAIRZ80D}/s100_mdriveh.c \
 	${ALTAIRZ80D}/s100_mdsad.c ${ALTAIRZ80D}/s100_selchan.c \
 	${ALTAIRZ80D}/s100_ss1.c ${ALTAIRZ80D}/s100_64fdc.c \
-	${ALTAIRZ80D}/s100_scp300f.c ${ALTAIRZ80D}/sim_imd.c \
+	${ALTAIRZ80D}/s100_scp300f.c \
 	${ALTAIRZ80D}/wd179x.c ${ALTAIRZ80D}/s100_hdc1001.c \
-	${ALTAIRZ80D}/s100_if3.c ${ALTAIRZ80D}/s100_adcs6.c
-ALTAIRZ80_OPT = -I ${ALTAIRZ80D}
+	${ALTAIRZ80D}/s100_if3.c ${ALTAIRZ80D}/s100_adcs6.c \
+	${ALTAIRZ80D}/m68kcpu.c ${ALTAIRZ80D}/m68kdasm.c \
+	${ALTAIRZ80D}/m68kopac.c ${ALTAIRZ80D}/m68kopdm.c \
+	${ALTAIRZ80D}/m68kopnz.c ${ALTAIRZ80D}/m68kops.c ${ALTAIRZ80D}/m68ksim.c
+ALTAIRZ80_OPT = -I ${ALTAIRZ80D} -DUSE_SIM_IMD
 
 
 GRID = GRI
@@ -1057,14 +1156,46 @@ TX0 = ${TX0D}/tx0_cpu.c ${TX0D}/tx0_dpy.c ${TX0D}/tx0_stddev.c \
       ${TX0D}/tx0_sys.c ${TX0D}/tx0_sys_orig.c ${DISPLAYL}
 TX0_OPT = -I ${TX0D} $(DISPLAY_OPT)
 
-
 SSEMD = SSEM
 SSEM = ${SSEMD}/ssem_cpu.c ${SSEMD}/ssem_sys.c
 SSEM_OPT = -I ${SSEMD}
 
+###
+### Unsupported/Incomplete simulators
+###
+
+SIGMAD = sigma
+SIGMA = ${SIGMAD}/sigma_cpu.c ${SIGMAD}/sigma_sys.c ${SIGMAD}/sigma_cis.c \
+	${SIGMAD}/sigma_coc.c ${SIGMAD}/sigma_dk.c ${SIGMAD}/sigma_dp.c \
+	${SIGMAD}/sigma_fp.c ${SIGMAD}/sigma_io.c ${SIGMAD}/sigma_lp.c \
+	${SIGMAD}/sigma_map.c ${SIGMAD}/sigma_mt.c ${SIGMAD}/sigma_pt.c \
+    ${SIGMAD}/sigma_rad.c ${SIGMAD}/sigma_rtc.c ${SIGMAD}/sigma_tt.c
+SIGMA_OPT = -I ${SIGMAD}
+
+ALPHAD = alpha
+ALPHA = ${ALPHAD}/alpha_500au_syslist.c ${ALPHAD}/alpha_cpu.c \
+    ${ALPHAD}/alpha_ev5_cons.c ${ALPHAD}/alpha_ev5_pal.c \
+    ${ALPHAD}/alpha_ev5_tlb.c ${ALPHAD}/alpha_fpi.c \
+    ${ALPHAD}/alpha_fpv.c ${ALPHAD}/alpha_io.c \
+    ${ALPHAD}/alpha_mmu.c ${ALPHAD}/alpha_sys.c
+ALPHA_OPT = -I ${ALPHAD} -DUSE_ADDR64 -DUSE_INT64
+
+SAGED = SAGE
+SAGE = ${SAGED}/sage_cpu.c ${SAGED}/sage_sys.c ${SAGED}/sage_stddev.c \
+    ${SAGED}/sage_cons.c ${SAGED}/sage_fd.c ${SAGED}/sage_lp.c \
+    ${SAGED}/m68k_cpu.c ${SAGED}/m68k_mem.c ${SAGED}/m68k_scp.c \
+    ${SAGED}/m68k_parse.tab.c ${SAGED}/m68k_sys.c \
+    ${SAGED}/i8251.c ${SAGED}/i8253.c ${SAGED}/i8255.c ${SAGED}/i8259.c ${SAGED}/i8272.c 
+SAGE_OPT = -I ${SAGED} -DHAVE_INT64 -DUSE_SIM_IMD
+
+PDQ3D = PDQ-3
+PDQ3 = ${PDQ3D}/pdq3_cpu.c ${PDQ3D}/pdq3_sys.c ${PDQ3D}/pdq3_stddev.c \
+    ${PDQ3D}/pdq3_mem.c ${PDQ3D}/pdq3_debug.c ${PDQ3D}/pdq3_fdc.c 
+PDQ3_OPT = -I ${PDQ3D} -DUSE_SIM_IMD
+
 
 #
-# Build everything
+# Build everything (not the unsupported/incomplete simulators)
 #
 ALL = pdp1 pdp4 pdp7 pdp8 pdp9 pdp15 pdp11 pdp10 \
 	vax microvax3900 microvax1 rtvax1000 microvax2 vax730 vax750 vax780 vax8600 \
@@ -1331,4 +1462,28 @@ ssem : ${BIN}ssem${EXE}
 ${BIN}ssem${EXE} : ${SSEM} ${SIM}
 	${MKDIRBIN}
 	${CC} ${SSEM} ${SIM} ${SSEM_OPT} $(CC_OUTSPEC) ${LDFLAGS}
+
+sigma : ${BIN}sigma${EXE}
+
+${BIN}sigma${EXE} : ${SIGMA} ${SIM}
+	${MKDIRBIN}
+	${CC} ${SIGMA} ${SIM} ${SIGMA_OPT} $(CC_OUTSPEC) ${LDFLAGS}
+
+alpha : ${BIN}alpha${EXE}
+
+${BIN}alpha${EXE} : ${ALPHA} ${SIM}
+	${MKDIRBIN}
+	${CC} ${ALPHA} ${SIM} ${ALPHA_OPT} $(CC_OUTSPEC) ${LDFLAGS}
+
+sage : ${BIN}sage${EXE}
+
+${BIN}sage${EXE} : ${SAGE} ${SIM}
+	${MKDIRBIN}
+	${CC} ${SAGE} ${SIM} ${SAGE_OPT} $(CC_OUTSPEC) ${LDFLAGS}
+
+pdq3 : ${BIN}pdq3${EXE}
+
+${BIN}pdq3${EXE} : ${PDQ3} ${SIM}
+	${MKDIRBIN}
+	${CC} ${PDQ3} ${SIM} ${PDQ3_OPT} $(CC_OUTSPEC) ${LDFLAGS}
 

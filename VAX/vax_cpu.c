@@ -227,6 +227,12 @@
                             R[rn] = rl; \
                             R[rn + 1] = rh; \
                             }
+#define CHECK_FOR_IDLE_LOOP if (PC == fault_PC) {                           /* to self? */ \
+                                if (PSL_GETIPL (PSL) == 0x1F)               /* int locked out? */ \
+                                    ABORT (STOP_LOOP);                      /* infinite loop */ \
+                                cpu_idle ();                                /* idle loop */ \
+                                }
+
 
 #define HIST_MIN        64
 #define HIST_MAX        65536
@@ -548,7 +554,7 @@ return buf;
 
 t_stat sim_instr (void)
 {
-volatile int32 opc, cc;                                 /* used by setjmp */
+volatile int32 opc = 0, cc;                             /* used by setjmp */
 volatile int32 acc;                                     /* set by setjmp */
 int abortval;
 t_stat r;
@@ -2184,20 +2190,12 @@ for ( ;; ) {
 
     case BRB:
         BRANCHB (brdisp);                               /* branch  */
-        if (PC == fault_PC) {                           /* to self? */
-            if (PSL_GETIPL (PSL) == 0x1F)               /* int locked out? */
-                ABORT (STOP_LOOP);                      /* infinite loop */
-            cpu_idle ();                                /* idle loop */
-            }
+        CHECK_FOR_IDLE_LOOP;
         break;
 
     case BRW:
         BRANCHW (brdisp);                               /* branch */
-        if (PC == fault_PC) {                           /* to self? */
-            if (PSL_GETIPL (PSL) == 0x1F)               /* int locked out? */
-                ABORT (STOP_LOOP);                      /* infinite loop */
-            cpu_idle ();                                /* idle loop */
-            }
+        CHECK_FOR_IDLE_LOOP;
         break;
 
     case BSBB:
@@ -2470,13 +2468,17 @@ for ( ;; ) {
         break;
 
     case BLBS:
-        if (op0 & 1)                                    /* br if bit set */
+        if (op0 & 1) {                                  /* br if bit set */
             BRANCHB (brdisp);
+            CHECK_FOR_IDLE_LOOP;
+            }
         break;
 
     case BLBC:
-        if ((op0 & 1) == 0)                             /* br if bit clear */
+        if ((op0 & 1) == 0) {                           /* br if bit clear */
             BRANCHB (brdisp);
+            CHECK_FOR_IDLE_LOOP;
+            }
         break;
 
 /* Extract field instructions - ext?v pos.rl,size.rb,base.wb,dst.wl
@@ -2541,6 +2543,12 @@ for ( ;; ) {
         temp = op_ffs (r, op1);                         /* find first 1 */
         WRITE_L (op0 + temp);                           /* store result */
         cc = r? 0: CC_Z;                                /* set cc's */
+        if ((cc == CC_Z) &&                             /* No set bits found? */
+            (cpu_idle_mask & VAX_IDLE_ULT1X) &&         /* running Ultrix 1.X" */
+            (PSL_GETIPL (PSL) == 0x0) &&                /*  at IPL 0? */
+            (fault_PC & 0x80000000) &&                  /*  in system space? */
+            ((fault_PC & 0x7fffffff) < 0x3000))         /*  in low system space? */
+            cpu_idle();                                 /* idle loop */
         break;
 
     case FFC:
@@ -2590,6 +2598,15 @@ for ( ;; ) {
         else if (cpu_unit.flags & UNIT_CONH)            /* halt to console? */
             cc = con_halt (CON_HLTINS, cc);             /* enter firmware */
         else {
+            /* allow potentially pending console output to */
+            /* be displayed before dropping back to scp */
+            if (sim_interval <= SERIAL_OUT_WAIT) {
+                sim_interval -= SERIAL_OUT_WAIT;
+                temp = sim_process_event ();
+                if (temp)
+                    ABORT (temp);
+                SET_IRQL;                               /* update interrupts */
+                }
             ABORT (STOP_HALT);                          /* halt to simulator */
             }
 
@@ -3228,9 +3245,7 @@ int i;
 
 if (!caveats_displayed) {
     caveats_displayed = TRUE;
-    printf ("%s", cpu_next_caveats);
-    if (sim_log)
-        fprintf (sim_log, "%s", cpu_next_caveats);
+    sim_printf ("%s", cpu_next_caveats);
     }
 if (SCPE_OK != get_aval (PC, &cpu_dev, &cpu_unit))  /* get data */
     return FALSE;
@@ -3518,11 +3533,12 @@ static struct os_idle os_tab[] = {
     { "NETBSD", VAX_IDLE_BSDNEW },
     { "ULTRIX", VAX_IDLE_ULT },
     { "ULTRIXOLD", VAX_IDLE_ULTOLD },
+    { "ULTRIX-1.X", VAX_IDLE_ULT1X },
     { "OPENBSDOLD", VAX_IDLE_QUAD },
     { "OPENBSD", VAX_IDLE_BSDNEW },
     { "QUASIJARUS", VAX_IDLE_QUAD },
     { "32V", VAX_IDLE_QUAD },
-    { "ALL", VAX_IDLE_VMS|VAX_IDLE_ULTOLD|VAX_IDLE_ULT|VAX_IDLE_QUAD|VAX_IDLE_BSDNEW },
+    { "ALL", VAX_IDLE_VMS|VAX_IDLE_ULTOLD|VAX_IDLE_ULT|VAX_IDLE_ULT1X|VAX_IDLE_QUAD|VAX_IDLE_BSDNEW },
     { NULL, 0 }
     };
 
@@ -3631,8 +3647,9 @@ fprintf (st, "                                        enable idle detection\n");
 fprintf (st, "   sim> SET CPU NOIDLE                  disable idle detection\n\n");
 fprintf (st, "Idle detection is disabled by default.  Unless ALL is specified, idle\n");
 fprintf (st, "detection is operating system specific.  If idle detection is enabled with\n");
-fprintf (st, "an incorrect operating system setting, simulator performance could be\n");
-fprintf (st, "impacted.  The default operating system setting is VMS.\n\n");
+fprintf (st, "an incorrect operating system setting, simulator performance or correct\n");
+fprintf (st, "functionality could be impacted.  The default operating system setting is\n");
+fprintf (st, "VMS.\n\n");
 fprintf (st, "The CPU can maintain a history of the most recently executed instructions.\n");
 fprintf (st, "This is controlled by the SET CPU HISTORY and SHOW CPU HISTORY commands:\n\n");
 fprintf (st, "   sim> SET CPU HISTORY                 clear history buffer\n");

@@ -2315,7 +2315,7 @@ t_stat cpu_set_size (UNIT *uptr, int32 val, char *cptr, void *desc)
 uint32 mc = 0;
 uint32 i;
 
-if ((val <= 0) || (val > MAXMEMSIZE32) || ((val & 0xFFFF) != 0))
+if ((val <= 0) || (((unsigned)val) > MAXMEMSIZE32) || ((val & 0xFFFF) != 0))
     return SCPE_ARG;
 for (i = val; i < MEMSIZE; i = i + 4)
     mc = mc | M[i >> 2];
@@ -2331,7 +2331,6 @@ return SCPE_OK;
 
 void set_r_display (uint32 *rbase)
 {
-extern REG *find_reg (char *cptr, char **optr, DEVICE *dptr);
 REG *rptr;
 int32 i;
 

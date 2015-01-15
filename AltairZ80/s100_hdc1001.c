@@ -56,8 +56,7 @@
 #define CMD_MSG     (1 << 2)
 #define RD_DATA_MSG (1 << 3)
 #define WR_DATA_MSG (1 << 4)
-#define STATUS_MSG  (1 << 5)
-#define VERBOSE_MSG (1 << 7)
+#define VERBOSE_MSG (1 << 5)
 
 #define HDC1001_MAX_DRIVES    4
 
@@ -96,7 +95,6 @@ static HDC1001_INFO hdc1001_info_data = { { 0x0, 0, 0xC8, 8 } };
 static HDC1001_INFO *hdc1001_info = &hdc1001_info_data;
 
 extern uint32 PCX;
-extern REG *sim_PC;
 extern t_stat set_iobase(UNIT *uptr, int32 val, char *cptr, void *desc);
 extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
@@ -107,8 +105,6 @@ extern int32 find_unit_index(UNIT *uptr);
 extern void PutBYTEWrapper(const uint32 Addr, const uint32 Value);
 extern uint8 GetBYTEWrapper(const uint32 Addr);
 
-#define UNIT_V_HDC1001_WLK        (UNIT_V_UF + 0) /* write locked                             */
-#define UNIT_HDC1001_WLK          (1 << UNIT_V_HDC1001_WLK)
 #define UNIT_V_HDC1001_VERBOSE    (UNIT_V_UF + 1) /* verbose mode, i.e. show error messages   */
 #define UNIT_HDC1001_VERBOSE      (1 << UNIT_V_HDC1001_VERBOSE)
 #define HDC1001_CAPACITY          (77*2*16*256)   /* Default Micropolis Disk Capacity         */
@@ -133,27 +129,29 @@ static REG hdc1001_reg[] = {
     { NULL }
 };
 
+#define HDC1001_NAME    "ADC Hard Disk Controller HDC1001"
+
 static MTAB hdc1001_mod[] = {
-    { MTAB_XTD|MTAB_VDV,    0,                      "IOBASE",   "IOBASE",   &set_iobase, &show_iobase, NULL },
-    { UNIT_HDC1001_WLK,     0,                      "WRTENB",   "WRTENB",   NULL  },
-    { UNIT_HDC1001_WLK,     UNIT_HDC1001_WLK,       "WRTLCK",   "WRTLCK",   NULL  },
+    { MTAB_XTD|MTAB_VDV,    0,                      "IOBASE",   "IOBASE",
+        &set_iobase, &show_iobase, NULL, "Sets disk controller I/O base address"    },
     /* quiet, no warning messages       */
-    { UNIT_HDC1001_VERBOSE, 0,                      "QUIET",    "QUIET",    NULL   },
+    { UNIT_HDC1001_VERBOSE, 0,                      "QUIET",    "QUIET",
+        NULL, NULL, NULL, "No verbose messages for unit " HDC1001_NAME "n"          },
     /* verbose, show warning messages   */
-    { UNIT_HDC1001_VERBOSE, UNIT_HDC1001_VERBOSE,   "VERBOSE",  "VERBOSE",  NULL },
+    { UNIT_HDC1001_VERBOSE, UNIT_HDC1001_VERBOSE,   "VERBOSE",  "VERBOSE",
+        NULL, NULL, NULL, "Verbose messages for unit " HDC1001_NAME "n"             },
     { 0 }
 };
 
 /* Debug Flags */
 static DEBTAB hdc1001_dt[] = {
-    { "ERROR",  ERROR_MSG },
-    { "SEEK",   SEEK_MSG },
-    { "CMD",    CMD_MSG },
-    { "RDDATA", RD_DATA_MSG },
-    { "WRDATA", WR_DATA_MSG },
-    { "STATUS", STATUS_MSG },
-    { "VERBOSE",VERBOSE_MSG },
-    { NULL,     0 }
+    { "ERROR",      ERROR_MSG,      "Error messages"    },
+    { "SEEK",       SEEK_MSG,       "Seek messages"     },
+    { "CMD",        CMD_MSG,        "Command messages"  },
+    { "READ",       RD_DATA_MSG,    "Read messages"     },
+    { "WRITE",      WR_DATA_MSG,    "Write messages"    },
+    { "VERBOSE",    VERBOSE_MSG,    "Verbose messages"  },
+    { NULL,         0                                   }
 };
 
 DEVICE hdc1001_dev = {
@@ -162,7 +160,7 @@ DEVICE hdc1001_dev = {
     NULL, NULL, &hdc1001_reset,
     NULL, &hdc1001_attach, &hdc1001_detach,
     &hdc1001_info_data, (DEV_DISABLE | DEV_DIS | DEV_DEBUG), ERROR_MSG,
-    hdc1001_dt, NULL, "ADC Hard Disk Controller HDC1001"
+    hdc1001_dt, NULL, HDC1001_NAME
 };
 
 /* Reset routine */
@@ -175,7 +173,7 @@ static t_stat hdc1001_reset(DEVICE *dptr)
     } else {
         /* Connect HDC1001 at base address */
         if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &hdc1001dev, FALSE) != 0) {
-            printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
+            sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
     }
@@ -231,22 +229,23 @@ static t_stat hdc1001_attach(UNIT *uptr, char *cptr)
     }
 
     if (uptr->flags & UNIT_HDC1001_VERBOSE)
-        printf("HDC1001%d, attached to '%s', type=%s, len=%d\n", i, cptr,
+        sim_printf("HDC1001%d, attached to '%s', type=%s, len=%d\n", i, cptr,
             uptr->u3 == IMAGE_TYPE_IMD ? "IMD" : uptr->u3 == IMAGE_TYPE_CPT ? "CPT" : "DSK",
             uptr->capac);
 
     if(uptr->u3 == IMAGE_TYPE_IMD) {
         if(uptr->capac < 318000) {
-            printf("Cannot create IMD files with SIMH.\nCopy an existing file and format it with CP/M.\n");
+            sim_printf("Cannot create IMD files with SIMH.\nCopy an existing file and format it with CP/M.\n");
             hdc1001_detach(uptr);
             return SCPE_OPENERR;
         }
 
         if (uptr->flags & UNIT_HDC1001_VERBOSE)
-            printf("--------------------------------------------------------\n");
-        hdc1001_info->drive[i].imd = diskOpen((uptr->fileref), (uptr->flags & UNIT_HDC1001_VERBOSE));
+            sim_printf("--------------------------------------------------------\n");
+        hdc1001_info->drive[i].imd = diskOpenEx((uptr->fileref), (uptr->flags & UNIT_HDC1001_VERBOSE),
+                                                &hdc1001_dev, VERBOSE_MSG, VERBOSE_MSG);
         if (uptr->flags & UNIT_HDC1001_VERBOSE)
-            printf("\n");
+            sim_printf("\n");
     } else {
         hdc1001_info->drive[i].imd = NULL;
     }
@@ -273,7 +272,7 @@ static t_stat hdc1001_detach(UNIT *uptr)
     pDrive->ready = 0;
 
     if (uptr->flags & UNIT_HDC1001_VERBOSE)
-        printf("Detach HDC1001%d\n", i);
+        sim_printf("Detach HDC1001%d\n", i);
 
     r = detach_unit(uptr);  /* detach unit */
     if ( r != SCPE_OK)

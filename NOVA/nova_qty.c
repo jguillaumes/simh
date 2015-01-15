@@ -133,7 +133,7 @@ int32   qty_auto    = 0 ;                               /*  QTY auto disconnect 
 int32   qty_polls   = 0 ;                               /*  total 'qty_svc' polls       */
 
 
-TMLN    qty_ldsc[ QTY_MAX ] = { 0 } ;                   /*  QTY line descriptors        */
+TMLN    qty_ldsc[ QTY_MAX ] = { {0} } ;                 /*  QTY line descriptors        */
 TMXR    qty_desc    = { QTY_MAX, 0, 0, qty_ldsc } ;     /*  mux descriptor      */
 int32   qty_status[ QTY_MAX ] = { 0 } ;                 /*  QTY line status             */
                                                         /*  (must be at least 32 bits)  */
@@ -489,13 +489,11 @@ t_stat qty_attach( UNIT * unitp, char * cptr )
     if ( sim_switches & SWMASK('M') )                   /* modem control? */
         {
         qty_mdm = 1;
-        printf( "Modem control activated\n" ) ;
-        if ( sim_log ) fprintf( sim_log, "Modem control activated\n" ) ;
+        sim_printf( "Modem control activated\n" ) ;
         if ( sim_switches & SWMASK ('A') )              /* autodisconnect? */
             {
             qty_auto = 1 ;
-            printf( "Auto disconnect activated\n" ) ;
-            if ( sim_log ) fprintf( sim_log, "Auto disconnect activated\n" ) ;
+            sim_printf( "Auto disconnect activated\n" ) ;
             }
         }
     qty_polls = 0 ;

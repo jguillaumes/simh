@@ -20,6 +20,10 @@
 
 #### Updated HP2100 simulator from Dave Bryan.
 
+#### Beta Sigma 5, 6 & 7 simulator from Bob Supnik
+
+#### Beta SAGE-II and PDQ-3 simulators from Holger Veit
+
 ### New Host Platform support - HP-UX and AIX
 
 ### New Functionality
@@ -165,6 +169,17 @@ ASSERT		failure have several different actions:
 Other related changes/extensions:
 The "!" command (execute a command on the local OS), now returns the command's exit status as the status from the "!" command.  This allows ON conditions to handle error status responses from OS commands and act as desired.
 
+#### Scriptable interactions with running simulators.
+
+The EXPECT command now exists to provide a means of reacting to simulator output and the SEND command exists to inject data into programs running within a simulator.
+
+    EXPECT {HALTAFTER=n,}"\r\nPassword: "
+    SEND {AFTER=n,}{DELAY=m,}"mypassword\r"
+    
+    or
+    
+    EXPECT {HALTAFTER=n,}"\r\nPassword: " SEND {AFTER=n,}{DELAY=m,}"mypassword\r"; GO
+    
 
 #### Help
 
@@ -208,6 +223,7 @@ The "!" command (execute a command on the local OS), now returns the command's e
     SHIFT                           Slide argument parameters %1 thru %9 left 1
     NOOP                            A no-op command
     ON                              Establish or cancel an ON condition dispatch
+    IF                              Test some simulator state and conditionally execute commands
     CD                              Change working directory
     SET DEFAULT                     Change working directory
     PWD                             Show working directory
@@ -215,11 +231,13 @@ The "!" command (execute a command on the local OS), now returns the command's e
     DIR {path|file}                 Display file listing
     LS {path|file}                  Display file listing
     NEXT                            Step across a subroutine call or step a single instruction.
+    EXPECT                          React to output produced by a simulated system
+    SEND                            Inject input to a simulated system's console
 
 #### Command Processing Enhancements
 
 ##### Environment variable insertion
-Built In variables %DATE%, %TIME%, %DATETIME%, %LDATE%, %LTIME%, %CTIME%, %DATE_YYYY%, %DATE_YY%, %DATE_MM%, %DATE_DD%, %DATE_D%, %DATE_WYYYY%, %DATE_WW%, %TIME_HH%, %TIME_MM%, %TIME_SS%, %STATUS%, %TSTATUS%, %SIM_VERIFY%, %SIM_QUIET%, %SIM_MESSAGE%
+Built In variables %DATE%, %TIME%, %DATETIME%, %LDATE%, %LTIME%, %CTIME%, %DATE_YYYY%, %DATE_YY%, %DATE_YC%, %DATE_MM%, %DATE_DD%, %DATE_D%, %DATE_WYYYY%, %DATE_WW%, %TIME_HH%, %TIME_MM%, %TIME_SS%, %STATUS%, %TSTATUS%, %SIM_VERIFY%, %SIM_QUIET%, %SIM_MESSAGE%
 Command Aliases
 
    Token "%0" expands to the command file name. 

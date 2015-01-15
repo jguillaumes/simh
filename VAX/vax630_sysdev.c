@@ -319,10 +319,11 @@ return ((val << 24) & 0xff000000) | (( val << 8) & 0xff0000) |
     ((val >> 8) & 0xff00) | ((val >> 24) & 0xff);
 }
 
+volatile int32 rom_loopval = 0;
+
 int32 rom_read_delay (int32 val)
 {
 uint32 i, l = rom_delay;
-int32 loopval = 0;
 
 if (rom_unit.flags & UNIT_NODELAY)
     return val;
@@ -344,12 +345,12 @@ if (rom_delay == 0) {
    by subsequent code or to avoid the whole computation being eliminated. */
 
         for (i = 0; i < c; i++)
-            loopval |= (loopval + ts) ^ rom_swapb (rom_swapb (loopval + ts));
+            rom_loopval |= (rom_loopval + ts) ^ rom_swapb (rom_swapb (rom_loopval + ts));
         te = sim_os_msec (); 
         if ((te - ts) < 50)                         /* sample big enough? */
             continue;
-        if (rom_delay < (loopval + (c / (te - ts) / 1000) + 1))
-            rom_delay = loopval + (c / (te - ts) / 1000) + 1;
+        if (rom_delay < (rom_loopval + (c / (te - ts) / 1000) + 1))
+            rom_delay = rom_loopval + (c / (te - ts) / 1000) + 1;
         if (++samples >= 4)
             break;
         c = c / 2;
@@ -359,8 +360,8 @@ if (rom_delay == 0) {
     }
 
 for (i = 0; i < l; i++)
-    loopval |= (loopval + val) ^ rom_swapb (rom_swapb (loopval + val));
-return val + loopval;
+    rom_loopval |= (rom_loopval + val) ^ rom_swapb (rom_swapb (rom_loopval + val));
+return val + rom_loopval;
 }
 
 int32 rom_rd (int32 pa)
@@ -755,7 +756,9 @@ struct reglink regtable[] = {
     { ROMBASE, ROMBASE+ROMSIZE+ROMSIZE, &rom_rd, NULL },
     { NVRBASE, NVRBASE+NVRASIZE, &nvr_rd, &nvr_wr },
     { KABASE, KABASE+KASIZE, &ka_rd, &ka_wr },
+#if !defined(VAX_620)
     { QVMBASE, QVMBASE+QVMSIZE, &vc_mem_rd, &vc_mem_wr },
+#endif
     { QBMBASE, QBMBASE+QBMSIZE, &qbmem_rd, &qbmem_wr },
     { 0, 0, NULL, NULL }
     };
@@ -1050,7 +1053,7 @@ return SCPE_OK;
 
 t_stat cpu_set_model (UNIT *uptr, int32 val, char *cptr, void *desc)
 {
-#if defined(HAVE_LIBSDL)
+#if defined(USE_SIM_VIDEO) && defined(HAVE_LIBSDL)
 char gbuf[CBUFSIZE];
 
 if ((cptr == NULL) || (!*cptr))

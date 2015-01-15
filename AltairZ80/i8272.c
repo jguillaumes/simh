@@ -57,7 +57,7 @@
 #include "i8272.h"
 
 #ifdef DBG_MSG
-#define DBG_PRINT(args) printf args
+#define DBG_PRINT(args) sim_printf args
 #else
 #define DBG_PRINT(args)
 #endif
@@ -143,8 +143,6 @@ extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_typ
 extern void PutByteDMA(const uint32 Addr, const uint32 Value);
 extern uint8 GetByteDMA(const uint32 Addr);
 
-#define UNIT_V_I8272_WLK        (UNIT_V_UF + 0) /* write locked                             */
-#define UNIT_I8272_WLK          (1 << UNIT_V_I8272_WLK)
 #define UNIT_V_I8272_VERBOSE    (UNIT_V_UF + 1) /* verbose mode, i.e. show error messages   */
 #define UNIT_I8272_VERBOSE      (1 << UNIT_V_I8272_VERBOSE)
 #define I8272_CAPACITY          (77*2*16*256)   /* Default Micropolis Disk Capacity         */
@@ -191,29 +189,32 @@ static UNIT i8272_unit[] = {
     { UDATA (NULL, UNIT_FIX + UNIT_ATTABLE + UNIT_DISABLE + UNIT_ROABLE, I8272_CAPACITY) }
 };
 
+#define I8272_NAME  "Intel/NEC(765) FDC Core I8272"
+
 static MTAB i8272_mod[] = {
-    { MTAB_XTD|MTAB_VDV,    0,                  "IOBASE",   "IOBASE",   &set_iobase, &show_iobase, NULL },
-    { UNIT_I8272_WLK,       0,                  "WRTENB",   "WRTENB",   NULL },
-    { UNIT_I8272_WLK,       UNIT_I8272_WLK,     "WRTLCK",   "WRTLCK",   NULL },
+    { MTAB_XTD|MTAB_VDV,    0,                  "IOBASE",   "IOBASE",
+        &set_iobase, &show_iobase, NULL, "Sets disk controller I/O base address"    },
     /* quiet, no warning messages       */
-    { UNIT_I8272_VERBOSE,   0,                  "QUIET",    "QUIET",    NULL },
+    { UNIT_I8272_VERBOSE,   0,                  "QUIET",    "QUIET",
+        NULL, NULL, NULL, "No verbose messages for unit " I8272_NAME "n"            },
     /* verbose, show warning messages   */
-    { UNIT_I8272_VERBOSE,   UNIT_I8272_VERBOSE, "VERBOSE",  "VERBOSE",  NULL },
+    { UNIT_I8272_VERBOSE,   UNIT_I8272_VERBOSE, "VERBOSE",  "VERBOSE",
+        NULL, NULL, NULL, "Verbose messages for unit " I8272_NAME "n"               },
     { 0 }
 };
 
 /* Debug Flags */
 static DEBTAB i8272_dt[] = {
-    { "ERROR",  ERROR_MSG },
-    { "SEEK",   SEEK_MSG },
-    { "CMD",    CMD_MSG },
-    { "RDDATA", RD_DATA_MSG },
-    { "WRDATA", WR_DATA_MSG },
-    { "STATUS", STATUS_MSG },
-    { "FMT",    FMT_MSG },
-    { "VERBOSE",VERBOSE_MSG },
-    { "IRQ",    IRQ_MSG },
-    { NULL,     0 }
+    { "ERROR",      ERROR_MSG,      "Error messages"    },
+    { "SEEK",       SEEK_MSG,       "Seek messages"     },
+    { "CMD",        CMD_MSG,        "Command messages"  },
+    { "READ",       RD_DATA_MSG,    "Read messages"     },
+    { "WRITE",      WR_DATA_MSG,    "Write messages"    },
+    { "STATUS",     STATUS_MSG,     "Status messages"   },
+    { "FMT",        FMT_MSG,        "Format messages"   },
+    { "VERBOSE",    VERBOSE_MSG,    "Verbose messages"  },
+    { "IRQ",        IRQ_MSG,        "IRQ messages"      },
+    { NULL,         0                                   }
 };
 
 DEVICE i8272_dev = {
@@ -222,7 +223,7 @@ DEVICE i8272_dev = {
     NULL, NULL, &i8272_reset,
     NULL, &i8272_attach, &i8272_detach,
     &i8272_info_data, (DEV_DISABLE | DEV_DIS | DEV_DEBUG), ERROR_MSG,
-    i8272_dt, NULL, "Intel/NEC(765) FDC Core I8272"
+    i8272_dt, NULL, I8272_NAME
 };
 
 static uint8 I8272_Setup_Cmd(uint8 fdc_cmd);
@@ -238,7 +239,7 @@ static t_stat i8272_reset(DEVICE *dptr)
     } else {
         /* Connect I/O Ports at base address */
         if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &i8272dev, FALSE) != 0) {
-            printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
+            sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
     }
@@ -301,14 +302,14 @@ t_stat i8272_attach(UNIT *uptr, char *cptr)
     if(uptr->capac > 0) {
         char *rtn = fgets(header, 4, uptr->fileref);
         if((rtn != NULL) && strncmp(header, "IMD", 3)) {
-            printf("I8272: Only IMD disk images are supported\n");
+            sim_printf("I8272: Only IMD disk images are supported\n");
             i8272_info->drive[i].uptr = NULL;
             return SCPE_OPENERR;
         }
     } else {
         /* create a disk image file in IMD format. */
         if (diskCreate(uptr->fileref, "$Id: i8272.c 1999 2008-07-22 04:25:28Z hharte $") != SCPE_OK) {
-            printf("I8272: Failed to create IMD disk.\n");
+            sim_printf("I8272: Failed to create IMD disk.\n");
             i8272_info->drive[i].uptr = NULL;
             return SCPE_OPENERR;
         }
@@ -318,19 +319,20 @@ t_stat i8272_attach(UNIT *uptr, char *cptr)
     uptr->u3 = IMAGE_TYPE_IMD;
 
     if (uptr->flags & UNIT_I8272_VERBOSE) {
-        printf("I8272%d: attached to '%s', type=%s, len=%d\n", i, cptr,
+        sim_printf("I8272%d: attached to '%s', type=%s, len=%d\n", i, cptr,
             uptr->u3 == IMAGE_TYPE_IMD ? "IMD" : uptr->u3 == IMAGE_TYPE_CPT ? "CPT" : "DSK",
             uptr->capac);
     }
 
     if(uptr->u3 == IMAGE_TYPE_IMD) {
         if (uptr->flags & UNIT_I8272_VERBOSE)
-            printf("--------------------------------------------------------\n");
-        i8272_info->drive[i].imd = diskOpen(uptr->fileref, uptr->flags & UNIT_I8272_VERBOSE);
+            sim_printf("--------------------------------------------------------\n");
+        i8272_info->drive[i].imd = diskOpenEx(uptr->fileref, uptr->flags & UNIT_I8272_VERBOSE,
+                                              &i8272_dev, VERBOSE_MSG, VERBOSE_MSG);
         if (uptr->flags & UNIT_I8272_VERBOSE)
-            printf("\n");
+            sim_printf("\n");
         if (i8272_info->drive[i].imd == NULL) {
-            printf("I8272: IMD disk corrupt.\n");
+            sim_printf("I8272: IMD disk corrupt.\n");
             i8272_info->drive[i].uptr = NULL;
             return SCPE_OPENERR;
         }
@@ -775,7 +777,7 @@ uint8 I8272_Write(const uint32 Addr, uint8 cData)
                 if(i8272_info->fdc_phase == EXEC_PHASE) {
                     switch(i8272_info->cmd[0] & 0x1F) {
                         case I8272_READ_TRACK:
-                            printf("I8272: " ADDRESS_FORMAT " Read a track (untested.)" NLP, PCX);
+                            sim_printf("I8272: " ADDRESS_FORMAT " Read a track (untested.)" NLP, PCX);
                             i8272_info->fdc_sector = 1; /* Read entire track from sector 1...eot */
                         case I8272_READ_DATA:
                         case I8272_READ_DELETED_DATA:
@@ -790,7 +792,7 @@ uint8 I8272_Write(const uint32 Addr, uint8 cData)
                                           128 << i8272_info->fdc_sec_len);
 
                                 if(pDrive->imd == NULL) {
-                                    printf(".imd is NULL!" NLP);
+                                    sim_printf(".imd is NULL!" NLP);
                                 }
                                 if(disk_read) { /* Read sector */
                                     sectRead(pDrive->imd,

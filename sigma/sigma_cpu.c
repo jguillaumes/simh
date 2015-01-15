@@ -455,7 +455,7 @@ while (reason == 0) {                                   /* loop until stop */
             io_sclr_req (sav_hi, 0);                    /* clear request */
             io_sclr_arm (sav_hi, 1);                    /* set armed */
             if ((res == 0) &&                           /* count overflow */
-                ((vec >= VEC_C1P) || (vec <= VEC_C4P))) /* on clock? */
+                ((vec >= VEC_C1P) && (vec <= VEC_C4P))) /* on clock? */
                 io_sclr_req (INTV (INTG_CTR, vec - VEC_C1P), 1);
             int_hiact = io_actv_int ();                 /* re-eval active */
             int_hireq = io_eval_int ();                 /* re-eval intr */
@@ -2661,7 +2661,6 @@ return SCPE_OK;
 
 void set_rf_display (uint32 *rfbase)
 {
-extern REG *find_reg (char *cptr, char **optr, DEVICE *dptr);
 REG *rptr;
 uint32 i;
 

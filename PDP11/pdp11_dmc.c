@@ -1,7 +1,7 @@
 /* pdp11_dmc.c: DMC11/DMR11/DMP11/DMV11 Emulation
   ------------------------------------------------------------------------------
 
-   Copyright (c) 2011, Robert M. A. Jarratt
+   Copyright (c) 2011, Robert M. A. Jarratt, Mark Pizzolato
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,8 @@
    in this Software without prior written authorization from the author.
 
   ------------------------------------------------------------------------------
+
+  Written by Mark Pizzolato based on an original version by Robert Jarratt
 
   Modification history:
 
@@ -435,6 +437,10 @@ typedef struct {
                                When retransmitting and receiving acknowledgments 
                                asynchronously with respect to transmission, X will 
                                have some value less than or equal to N. */
+    uint8 NAKed;            /* The value of R sent in the most recent NAK message.  This
+                               is used to avoid sending additional NAKs when one has already
+                               been sent while the remaining packets in the transmit pipeline
+                               are still arriving. */
     t_bool SACK;            /* Send ACK flag.  This flag is set when either R 
                                is incremented, meaning a new sequential data 
                                message has been received which requires an ACK 
@@ -469,6 +475,7 @@ typedef struct {
     BUFFER *xmt_buffer;     /* Current Transmit Buffer */
     BUFFER *xmt_done_buffer;/* Just Completed Transmit Buffer */
     uint8 nak_reason;       /*  */
+    uint8 nak_crc_reason;   /* CRC status for current received packet */
     DDCMP_LinkState state;  /* Current State */
     t_bool TimerRunning;    /* Timer Running Flag */
     t_bool TimeRemaining;   /* Seconds remaining before timeout (when timer running) */
@@ -600,8 +607,8 @@ void ddcmp_SetAeqRESP             (CTLR *controller);
 void ddcmp_SetTequalAplus1        (CTLR *controller);
 void ddcmp_IncrementT             (CTLR *controller);
 void ddcmp_SetNAKreason3          (CTLR *controller);
-void ddcmp_SetNAKreason2          (CTLR *controller);
-void ddcmp_NAKMissingPackets      (CTLR *controller);
+void ddcmp_SetNAKReasonCRCError   (CTLR *controller);
+void ddcmp_NAKMissingPacket       (CTLR *controller);
 void ddcmp_IfTleAthenSetTeqAplus1 (CTLR *controller);
 void ddcmp_IfAltXthenStartTimer   (CTLR *controller);
 void ddcmp_IfAgeXthenStopTimer    (CTLR *controller);
@@ -665,10 +672,11 @@ DDCMP_STATETABLE DDCMP_TABLE[] = {
                                                                     ddcmp_NotifyMaintRcvd}},
     {22, Run,         {ddcmp_ReceiveStack},        Run,            {ddcmp_SetSACK}},
     {23, Run,         {ddcmp_ReceiveDataMsg,
-                       ddcmp_NUMGtRplus1},         Run,            {ddcmp_NAKMissingPackets}},
+                       ddcmp_NUMGtRplus1},         Run,            {ddcmp_NAKMissingPacket}},
     {24, Run,         {ddcmp_ReceiveDataMsg,
                        ddcmp_NUMEqRplus1},         Run,            {ddcmp_GiveBufferToUser}},
-    {25, Run,         {ddcmp_ReceiveMessageError}, Run,            {ddcmp_SetSNAK}},
+    {25, Run,         {ddcmp_ReceiveMessageError}, Run,            {ddcmp_SetSNAK,
+                                                                    ddcmp_SetNAKReasonCRCError}},
     {26, Run,         {ddcmp_ReceiveRep,
                        ddcmp_NumEqR},              Run,            {ddcmp_SetSACK}},
     {27, Run,         {ddcmp_ReceiveRep,
@@ -822,8 +830,8 @@ DDCMP_ACTION_NAME ddcmp_Actions[] = {
     NAME(SetTequalAplus1),
     NAME(IncrementT),
     NAME(SetNAKreason3),
-    NAME(SetNAKreason2),
-    NAME(NAKMissingPackets),
+    NAME(SetNAKReasonCRCError),
+    NAME(NAKMissingPacket),
     NAME(IfTleAthenSetTeqAplus1),
     NAME(IfAltXthenStartTimer),
     NAME(IfAgeXthenStopTimer),
@@ -859,6 +867,31 @@ while (*Actions)
 return buf;
 }
 
+char *ddcmp_link_state(DDCMP *link)
+{
+static char buf[512];
+
+sprintf (buf, "(R:%d,N:%d,A:%d,T:%d,X:%d,SACK:%d,SNAK:%d,SREP:%d,NAKed:%d)", link->R, link->N, link->A, link->T, link->X, link->SACK, link->SNAK, link->SREP, link->NAKed);
+return buf;
+}
+
+char *controller_queue_state(CTLR *controller)
+{
+static char buf[512];
+
+sprintf (buf, "(ACKW:%d,XMT:%d,RCV:%d,CMPL:%d,FREE:%d) TOT:%d", 
+                    (int)controller->ack_wait_queue->count, 
+                    (int)controller->xmt_queue->count, 
+                    (int)controller->rcv_queue->count, 
+                    (int)controller->completion_queue->count, 
+                    (int)controller->free_queue->count,
+                    (int)controller->ack_wait_queue->count+
+                    (int)controller->xmt_queue->count+
+                    (int)controller->rcv_queue->count+ 
+                    (int)controller->completion_queue->count+
+                    (int)controller->free_queue->count);
+return buf;
+}
 
 DDCMP_LinkState NewState;
 DDCMP_LinkAction_Routine Actions[10];
@@ -953,9 +986,9 @@ DEBTAB dmc_debug[] = {
 
 UNIT dmc_units[DMC_NUMDEVICE+2];            /* One per device plus an I/O polling unit and a timing unit */
 
-UNIT dmc_unit_template = { UDATA (&dmc_svc, UNIT_ATTABLE, 0) };
-UNIT dmc_poll_unit_template = { UDATA (&dmc_poll_svc, UNIT_DIS, 0) };
-UNIT dmc_timer_unit_template = { UDATA (&dmc_timer_svc, UNIT_DIS, 0) };
+UNIT dmc_unit_template = { UDATA (&dmc_svc, UNIT_ATTABLE|UNIT_IDLE, 0) };
+UNIT dmc_poll_unit_template = { UDATA (&dmc_poll_svc, UNIT_DIS|UNIT_IDLE, 0) };
+UNIT dmc_timer_unit_template = { UDATA (&dmc_timer_svc, UNIT_DIS|UNIT_IDLE, 0) };
 
 UNIT dmp_units[DMP_NUMDEVICE+2];            /* One per device plus an I/O polling unit and a timing unit */
 
@@ -1691,7 +1724,7 @@ const char helpString[] =
     " The type of device being emulated can be changed with the following\n"
     " command:\n"
     "\n"
-    "+sim> SET %U TYPE={DMR,DMC}\n"
+    "+sim> SET %U TYPE={DMR|DMC}\n"
     "\n"
     " A SET TYPE command should be entered before the device is attached to a\n"
     " listening port.\n"
@@ -2309,12 +2342,18 @@ while ((control = controller->control_out)) {
 controller->control_out = NULL;
 dmc_setreg(controller, 0, 0, DBG_RGC);
 if (controller->dev_type == DMR) {
-    /* Indicates microdiagnostics complete */
-    if (((*controller->csrs->sel0 & DMC_SEL0_M_UDIAG) != 0) ^
-        (dmc_microdiag[controller->index]))
-        dmc_setreg(controller, 2, 0x8000, DBG_RGC);/* Microdiagnostics Complete */
-    else
-        dmc_setreg(controller, 2, 0x4000, DBG_RGC); /* Microdiagnostics Inhibited */
+    if (dmc_is_attached(controller->unit)) {
+        /* Indicates microdiagnostics complete */
+        if (((*controller->csrs->sel0 & DMC_SEL0_M_UDIAG) != 0) ^
+            (dmc_microdiag[controller->index]))
+            dmc_setreg(controller, 2, 0x8000, DBG_RGC);/* Microdiagnostics Complete */
+        else
+            dmc_setreg(controller, 2, 0x4000, DBG_RGC); /* Microdiagnostics Inhibited */
+        }
+    else {
+        /* Indicate M8203 (Line Unit) test failed */
+        dmc_setreg(controller, 2, 0x0200, DBG_RGC);
+        }
     }
 else {
     /* preserve contents of BSEL3 if DMC-11 */
@@ -2402,7 +2441,7 @@ if (dmc_is_attached(controller->unit)) {
 
     dmc_start_control_output_transfer(controller);
 
-    if (ddcmp_UserSendMessage (controller))
+    if (controller->xmt_queue->count)
         ddcmp_dispatch (controller, 0);
     if (controller->transfer_state == Idle)
         dmc_start_transfer_buffer(controller);
@@ -2419,7 +2458,7 @@ if (dmc_is_attached(controller->unit)) {
     if ((controller->completion_queue->count) ||    /* if completion queue not empty? */
         (controller->control_out)             ||    /*    or pending control outs? */
         (controller->transfer_state != Idle))       /*    or registers are busy */
-        sim_activate (uptr, tmxr_poll);             /* wake up periodically until these don't exist */
+        sim_clock_coschedule (uptr, tmxr_poll);     /* wake up periodically until these don't exist */
     }
 
 return SCPE_OK;
@@ -2440,7 +2479,7 @@ if (dmc >= 0) {                                 /* new connection? */
     dmc_get_modem (controller);
     sim_debug(DBG_MDM, dptr, "dmc_poll_svc(dmc=%d) - Connection State Change to UP(ON)\n", dmc);
     ddcmp_dispatch (controller, 0);
-    sim_activate (controller->unit, tmxr_poll);     /* be sure to wake up soon to continue processing */
+    sim_clock_coschedule (controller->unit, tmxr_poll); /* be sure to wake up soon to continue processing */
     }
 tmxr_poll_rx (mp);
 tmxr_poll_tx (mp);
@@ -2460,7 +2499,7 @@ for (dmc=active=attached=0; dmc < mp->lines; dmc++) {
         (!(new_modem & DMC_SEL4_M_CAR))) {
         sim_debug(DBG_MDM, controller->device, "dmc_poll_svc(dmc=%d) - Connection State Change to %s\n", dmc, (new_modem & DMC_SEL4_M_CAR) ? "UP(ON)" : "DOWN(OFF)");
         ddcmp_dispatch (controller, 0);
-        sim_activate (controller->unit, tmxr_poll);     /* wake up soon to finish processing */
+        sim_clock_coschedule (controller->unit, tmxr_poll); /* wake up soon to finish processing */
         }
     if ((lp->xmte && tmxr_tpbusyln(lp)) || 
         (lp->xmte && controller->link.xmt_buffer) ||
@@ -2549,25 +2588,19 @@ BUFFER *dmc_buffer_allocate(CTLR *controller)
 BUFFER *buffer = (BUFFER *)remqueue (controller->free_queue->hdr.next);
 
 if (!buffer) {
-    fprintf (stdout, "DDCMP Buffer allocation failure.\n");
-    fprintf (stdout, "This is a fatal error which should never happen.\n");
-    fprintf (stdout, "Please submit this output when you report this bug.\n");
+    sim_printf ("DDCMP Buffer allocation failure.\n");
+    sim_printf ("This is a fatal error which should never happen.\n");
+    sim_printf ("Please submit this output when you report this bug.\n");
     dmc_showqueues (stdout, controller->unit, 0, NULL);
     dmc_showstats (stdout, controller->unit, 0, NULL);
     dmc_showddcmp (stdout, controller->unit, 0, NULL);
     if (sim_log) {
-        fprintf (sim_log, "DDCMP Buffer allocation failure.\n");
-        fprintf (sim_log, "This is a fatal error which should never happen.\n");
-        fprintf (sim_log, "Please submit this output when you report this bug.\n");
         dmc_showqueues (sim_log, controller->unit, 0, NULL);
         dmc_showstats (sim_log, controller->unit, 0, NULL);
         dmc_showddcmp (sim_log, controller->unit, 0, NULL);
         fflush (sim_log);
         }
     if (sim_deb) {
-        fprintf (sim_deb, "DDCMP Buffer allocation failure.\n");
-        fprintf (sim_deb, "This is a fatal error which should never happen.\n");
-        fprintf (sim_deb, "Please submit this output when you report this bug.\n");
         dmc_showqueues (sim_deb, controller->unit, 0, NULL);
         dmc_showstats (sim_deb, controller->unit, 0, NULL);
         dmc_showddcmp (sim_deb, controller->unit, 0, NULL);
@@ -2594,10 +2627,10 @@ if (buffer) {
     buffer->address = address;
     buffer->count = count;
     ASSURE (insqueue (&buffer->hdr, q->hdr.prev)); /* Insert at tail */
-    sim_debug(DBG_INF, q->controller->device, "%s%d: Queued %s buffer address=0x%08x count=%d\n", q->controller->device->name, q->controller->index, q->name, address, count);
+    sim_debug(DBG_INF, q->controller->device, "%s%d: Queued %s buffer address=0x%08x count=%d %s\n", q->controller->device->name, q->controller->index, q->name, address, count, controller_queue_state(q->controller));
     }
 else {
-    sim_debug(DBG_WRN, q->controller->device, "%s%d: Failed to queue %s buffer address=0x%08x, queue full\n", q->controller->device->name, q->controller->index, q->name, address);
+    sim_debug(DBG_WRN, q->controller->device, "%s%d: Failed to queue %s buffer address=0x%08x, queue full %s\n", q->controller->device->name, q->controller->index, q->name, address, controller_queue_state(q->controller));
     // TODO: Report error here.
     }
 return buffer;
@@ -2659,11 +2692,11 @@ if ((!head) ||
 count = (uint16)head->actual_bytes_transferred;
 switch (head->type) {
     case Receive:
-        sim_debug(DBG_INF, controller->device, "%s%d: Starting data output transfer for receive, address=0x%08x, count=%d\n", controller->device->name, controller->index, head->address, count);
+        sim_debug(DBG_INF, controller->device, "%s%d: Starting data output transfer for receive, address=0x%08x, count=%d %s\n", controller->device->name, controller->index, head->address, count, controller_queue_state(controller));
         dmc_set_type_output(controller, DMC_C_TYPE_RBACC);
         break;
     case TransmitData:
-        sim_debug(DBG_INF, controller->device, "%s%d: Starting data output transfer for transmit, address=0x%08x, count=%d\n", controller->device->name, controller->index, head->address, count);
+        sim_debug(DBG_INF, controller->device, "%s%d: Starting data output transfer for transmit, address=0x%08x, count=%d %s\n", controller->device->name, controller->index, head->address, count, controller_queue_state(controller));
         dmc_set_type_output(controller, DMC_C_TYPE_XBACC);
         break;
     default:
@@ -2682,7 +2715,7 @@ BUFFER *buffer;
 if ((dmc_is_rdyo_set(controller)) ||
     (controller->transfer_state != OutputTransfer))
     return;
-sim_debug(DBG_INF, controller->device, "%s%d: Output transfer completed\n", controller->device->name, controller->index);
+sim_debug(DBG_INF, controller->device, "%s%d: Output transfer completed %s\n", controller->device->name, controller->index, controller_queue_state(controller));
 buffer = (BUFFER *)remqueue (controller->completion_queue->hdr.next);
 ASSURE (insqueue (&buffer->hdr, controller->free_queue->hdr.prev));
 controller->transmit_buffer_output_transfers_completed++;
@@ -3009,23 +3042,35 @@ void ddcmp_SetNAKreason3          (CTLR *controller)
 {
 controller->link.nak_reason = 3;
 }
-void ddcmp_SetNAKreason2          (CTLR *controller)
+void ddcmp_SetNAKReasonCRCError   (CTLR *controller)
 {
-controller->link.nak_reason = 2;
+controller->link.nak_reason = controller->link.nak_crc_reason;
 }
-void ddcmp_NAKMissingPackets      (CTLR *controller)
+void ddcmp_NAKMissingPacket       (CTLR *controller)
 {
 uint8 R = controller->link.R;
 QH *qh = &controller->xmt_queue->hdr;
 
 while (ddcmp_compare (controller->link.rcv_pkt[DDCMP_NUM_OFFSET], GE, R, controller)) {
     BUFFER *buffer = dmc_buffer_allocate(controller);
+
+    if (NULL == buffer) {
+        sim_debug(DBG_INF, controller->device, "%s%d: No Buffers cause NAKMissingPackets to stop %s\n", controller->device->name, controller->index, controller_queue_state(controller));
+        break;
+        }
+    if (ddcmp_compare (controller->link.rcv_pkt[DDCMP_NUM_OFFSET], GE, controller->link.NAKed, controller)) {
+        sim_debug(DBG_INF, controller->device, "%s%d: NAK for prior missing packet %d already sent, still waiting %s\n", controller->device->name, controller->index, controller->link.NAKed, controller_queue_state(controller));
+        ASSURE (insqueue (&buffer->hdr, &controller->free_queue->hdr)); /* Release buffer */
+        break;
+        }
     buffer->transfer_buffer = (uint8 *)malloc (DDCMP_HEADER_SIZE);
     buffer->count = DDCMP_HEADER_SIZE;
     ddcmp_build_nak_packet (buffer->transfer_buffer, 2, R, DDCMP_FLAG_SELECT);
+    controller->link.NAKed = R;
     R = R + 1;
     ASSURE (insqueue (&buffer->hdr, qh));
     qh = &buffer->hdr;
+    break; /* Only generate a single NAK */
     }
 dmc_ddcmp_start_transmitter (controller);
 }
@@ -3081,14 +3126,15 @@ void ddcmp_ReTransmitMessageT (CTLR *controller)
 {
 BUFFER *buffer = dmc_buffer_queue_head(controller->ack_wait_queue);
 size_t i;
+uint8 T = controller->link.T;
 
 for (i=0; i < controller->ack_wait_queue->count; ++i) {
     if ((!buffer->transfer_buffer) || 
-        ddcmp_compare (buffer->transfer_buffer[DDCMP_NUM_OFFSET], NE, controller->link.T, controller)) {
+        ddcmp_compare (buffer->transfer_buffer[DDCMP_NUM_OFFSET], NE, T, controller)) {
         buffer = (BUFFER *)buffer->hdr.next;
         continue;
         }
-    ddcmp_build_data_packet (buffer->transfer_buffer, buffer->count - (DDCMP_HEADER_SIZE + DDCMP_CRC_SIZE), DDCMP_FLAG_SELECT|DDCMP_FLAG_QSYNC, controller->link.T, controller->link.R);
+    ddcmp_build_data_packet (buffer->transfer_buffer, buffer->count - (DDCMP_HEADER_SIZE + DDCMP_CRC_SIZE), DDCMP_FLAG_SELECT|DDCMP_FLAG_QSYNC, T, controller->link.R);
     buffer = (BUFFER *)remqueue (&buffer->hdr);
     ASSURE (insqueue (&buffer->hdr, controller->xmt_queue->hdr.prev)); /* Insert at tail */
     break;
@@ -3147,14 +3193,16 @@ t_bool ddcmp_ReceiveStack         (CTLR *controller)
 return ((controller->link.ScanningEvents & DDCMP_EVENT_PKT_RCVD) &&
         controller->link.rcv_pkt &&
         (controller->link.rcv_pkt[0] == DDCMP_ENQ) &&
-        (controller->link.rcv_pkt[1] == DDCMP_CTL_STACK));
+        (controller->link.rcv_pkt[1] == DDCMP_CTL_STACK) &&
+        (!ddcmp_ReceiveMessageError(controller)));
 }
 t_bool ddcmp_ReceiveStrt          (CTLR *controller)
 {
 return ((controller->link.ScanningEvents & DDCMP_EVENT_PKT_RCVD) &&
         controller->link.rcv_pkt &&
         (controller->link.rcv_pkt[0] == DDCMP_ENQ) &&
-        (controller->link.rcv_pkt[1] == DDCMP_CTL_STRT));
+        (controller->link.rcv_pkt[1] == DDCMP_CTL_STRT) &&
+        (!ddcmp_ReceiveMessageError(controller)));
 }
 t_bool ddcmp_TimerRunning         (CTLR *controller)
 {
@@ -3172,28 +3220,32 @@ t_bool ddcmp_ReceiveMaintMessage  (CTLR *controller)
 {
 return ((controller->link.ScanningEvents & DDCMP_EVENT_PKT_RCVD) && 
         controller->link.rcv_pkt &&
-        (controller->link.rcv_pkt[0] == DDCMP_DLE));
+        (controller->link.rcv_pkt[0] == DDCMP_DLE) && 
+        (!ddcmp_ReceiveMessageError(controller)));
 }
 t_bool ddcmp_ReceiveAck           (CTLR *controller)
 {
 return ((controller->link.ScanningEvents & DDCMP_EVENT_PKT_RCVD) &&
         controller->link.rcv_pkt &&
         (controller->link.rcv_pkt[0] == DDCMP_ENQ) &&
-        (controller->link.rcv_pkt[1] == DDCMP_CTL_ACK));
+        (controller->link.rcv_pkt[1] == DDCMP_CTL_ACK) &&
+        (!ddcmp_ReceiveMessageError(controller)));
 }
 t_bool ddcmp_ReceiveNak           (CTLR *controller)
 {
 return ((controller->link.ScanningEvents & DDCMP_EVENT_PKT_RCVD) &&
         controller->link.rcv_pkt &&
         (controller->link.rcv_pkt[0] == DDCMP_ENQ) &&
-        (controller->link.rcv_pkt[1] == DDCMP_CTL_NAK));
+        (controller->link.rcv_pkt[1] == DDCMP_CTL_NAK) &&
+        (!ddcmp_ReceiveMessageError(controller)));
 }
 t_bool ddcmp_ReceiveRep           (CTLR *controller)
 {
 return ((controller->link.ScanningEvents & DDCMP_EVENT_PKT_RCVD) &&
         controller->link.rcv_pkt &&
         (controller->link.rcv_pkt[0] == DDCMP_ENQ) &&
-        (controller->link.rcv_pkt[1] == DDCMP_CTL_REP));
+        (controller->link.rcv_pkt[1] == DDCMP_CTL_REP) &&
+        (!ddcmp_ReceiveMessageError(controller)));
 }
 t_bool ddcmp_NUMEqRplus1          (CTLR *controller)
 {
@@ -3211,7 +3263,8 @@ t_bool ddcmp_ReceiveDataMsg       (CTLR *controller)
 {
 t_bool breturn = ((controller->link.ScanningEvents & DDCMP_EVENT_PKT_RCVD) &&
                   controller->link.rcv_pkt &&
-                  (controller->link.rcv_pkt[0] == DDCMP_SOH));
+                  (controller->link.rcv_pkt[0] == DDCMP_SOH) &&
+                  (!ddcmp_ReceiveMessageError(controller)));
 if (breturn)
     return breturn;
 return breturn;
@@ -3220,7 +3273,8 @@ t_bool ddcmp_ReceiveMaintMsg      (CTLR *controller)
 {
 t_bool breturn = ((controller->link.ScanningEvents & DDCMP_EVENT_PKT_RCVD) &&
                   controller->link.rcv_pkt &&
-                  (controller->link.rcv_pkt[0] == DDCMP_DLE));
+                  (controller->link.rcv_pkt[0] == DDCMP_DLE) &&
+                  (!ddcmp_ReceiveMessageError(controller)));
 if (breturn)
     return breturn;
 return breturn;
@@ -3253,11 +3307,18 @@ return (ddcmp_compare (controller->link.T, EQ, controller->link.N + 1, controlle
 }
 t_bool ddcmp_ReceiveMessageError  (CTLR *controller)
 {
-if (controller->link.rcv_pkt &&
-    ((0 != ddcmp_crc16 (0, controller->link.rcv_pkt, 8)) ||
-     ((controller->link.rcv_pkt[0] != DDCMP_ENQ) &&
-      (0 != ddcmp_crc16 (0, controller->link.rcv_pkt+8, controller->link.rcv_pkt_size-8)))))
-      return TRUE;
+if ((controller->link.ScanningEvents & DDCMP_EVENT_PKT_RCVD) && controller->link.rcv_pkt) {
+    if (0 != ddcmp_crc16 (0, controller->link.rcv_pkt, 8)) {
+        controller->link.nak_crc_reason = 1;    /* Header CRC Error */
+        return TRUE;
+        }
+    if ((controller->link.rcv_pkt[0] != DDCMP_ENQ) &&
+        (0 != ddcmp_crc16 (0, controller->link.rcv_pkt+8, controller->link.rcv_pkt_size-8))) {
+        controller->link.nak_crc_reason = 2;    /* Data CRC Error */
+        return TRUE;
+        }
+    controller->link.nak_crc_reason = 0;        /* No CRC Error */
+    }
 return FALSE;
 }
 t_bool ddcmp_NumEqR               (CTLR *controller)
@@ -3336,6 +3397,7 @@ return ((controller->link.ScanningEvents & DDCMP_EVENT_XMIT_DONE) &&
 void ddcmp_dispatch(CTLR *controller, uint32 EventMask)
 {
 DDCMP_STATETABLE *table;
+int matched = 0;
 static const char *states[] = {"Halt", "IStart", "AStart", "Run", "Maintenance"};
 
 if (controller->link.Scanning) {
@@ -3360,7 +3422,9 @@ for (table=DDCMP_TABLE; table->Conditions[0] != NULL; ++table) {
             }
         if (!match)
             continue;
-        sim_debug (DBG_INF, controller->device, "%s%d: ddcmp_dispatch(%X) - %s conditions matching for rule %d(%s), initiating actions (%s)\n", controller->device->name, controller->index, EventMask, states[table->State], table->RuleNumber, ddcmp_conditions(table->Conditions), ddcmp_actions(table->Actions));
+        ++matched;
+        sim_debug (DBG_INF, controller->device, "%s%d: ddcmp_dispatch(%X) - %s conditions matching for rule %2d(%s)%s,\n"
+                                                "                                           initiating actions (%s)\n", controller->device->name, controller->index, EventMask, states[table->State], table->RuleNumber, ddcmp_conditions(table->Conditions), ddcmp_link_state(&controller->link), ddcmp_actions(table->Actions));
         while (*action != NULL) {
             (*action)(controller);
             ++action;
@@ -3370,6 +3434,9 @@ for (table=DDCMP_TABLE; table->Conditions[0] != NULL; ++table) {
             controller->link.state = table->NewState;
             }
         }
+    }
+if (matched) {
+    sim_debug (DBG_INF, controller->device, "%s%d: ddcmp_dispatch(%X) - queues: %s\n", controller->device->name, controller->index, EventMask, controller_queue_state(controller));
     }
 controller->link.Scanning = FALSE;
 controller->link.ScanningEvents &= ~EventMask;
@@ -3395,6 +3462,10 @@ if ((controller->link.xmt_buffer) ||        /* if Already Transmitting */
 while (buffer) {
     if (buffer->transfer_buffer[0] == 0)
         return;
+    if ((controller->link.state != Maintenance) && (buffer->transfer_buffer[DDCMP_RESP_OFFSET] != controller->link.R)) {
+        sim_debug(DBG_INF, controller->device, "%s%d: Packet RESP fixup from %d to %d %s\n", controller->device->name, controller->index, buffer->transfer_buffer[DDCMP_RESP_OFFSET], controller->link.R, controller_queue_state(controller));
+        buffer->transfer_buffer[DDCMP_RESP_OFFSET] = controller->link.R; /* Make sure that ACK or implied ACK is always up to date */
+        }
     /* Need to make sure we dynamically compute the packet CRCs since header details can change */
     r = ddcmp_tmxr_put_packet_crc_ln (controller->line, buffer->transfer_buffer, buffer->count, *controller->corruption_factor);
     if (r == SCPE_OK) {

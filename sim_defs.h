@@ -121,6 +121,17 @@
 #include <process.h>
 #endif
 
+#ifdef USE_REGEX
+#undef USE_REGEX
+#endif
+#if defined(HAVE_PCREPOSIX_H)
+#include <pcreposix.h>
+#define USE_REGEX 1
+#elif defined(HAVE_REGEX_H)
+#include <regex.h>
+#define USE_REGEX 1
+#endif
+
 /* avoid macro names collisions */
 #ifdef MAX
 #undef MAX
@@ -192,9 +203,11 @@ typedef uint32          t_value;
 #if defined (USE_INT64) && defined (USE_ADDR64)         /* 64b address */
 typedef t_uint64        t_addr;
 #define T_ADDR_W        64
+#define T_ADDR_FMT      LL_FMT
 #else                                                   /* 32b address */
 typedef uint32          t_addr;
 #define T_ADDR_W        32
+#define T_ADDR_FMT      ""
 #endif                                                  /* end 64b address */
 
 #if defined (_WIN32)
@@ -313,8 +326,9 @@ typedef uint32          t_addr;
 #define SCPE_AFAIL      (SCPE_BASE + 42)                /* assert failed */
 #define SCPE_INVREM     (SCPE_BASE + 43)                /* invalid remote console command */
 #define SCPE_NOTATT     (SCPE_BASE + 44)                /* not attached */
+#define SCPE_EXPECT     (SCPE_BASE + 45)                /* expect matched */
 
-#define SCPE_MAX_ERR    (SCPE_BASE + 45)                /* Maximum SCPE Error Value */
+#define SCPE_MAX_ERR    (SCPE_BASE + 46)                /* Maximum SCPE Error Value */
 #define SCPE_KFLAG      0x1000                          /* tti data flag */
 #define SCPE_BREAK      0x2000                          /* tti break flag */
 #define SCPE_NOMESSAGE  0x10000000                      /* message display supression flag */
@@ -516,6 +530,8 @@ struct sim_unit {
 #define UNIT_ATTMULT    0000001         /* Allow multiple attach commands */
 #define UNIT_TM_POLL    0000002         /* TMXR Polling unit */
 #define UNIT_NO_FIO     0000004         /* fileref is NOT a FILE * */
+#define UNIT_V_DF_TAPE  3               /* Bit offset for Tape Density reservation */
+#define UNIT_S_DF_TAPE  3               /* Bits Reserved for Tape Density */
 
 struct sim_bitfield {
     char            *name;                              /* field name */
@@ -616,8 +632,9 @@ struct sim_mtab {
 struct sim_schtab {
     int32               logic;                          /* logical operator */
     int32               boolop;                         /* boolean operator */
-    t_value             mask;                           /* mask for logical */
-    t_value             comp;                           /* comparison for boolean */
+    uint32              count;                          /* value count in mask and comp arrays */
+    t_value             *mask;                          /* mask for logical */
+    t_value             *comp;                          /* comparison for boolean */
     };
 
 /* Breakpoint table */
@@ -632,6 +649,52 @@ struct sim_brktab {
     char                *act;                           /* action string */
     };
 
+/* Expect rule */
+
+struct sim_exptab {
+    uint8               *match;                         /* match string */
+    uint32              size;                           /* match string size */
+    char                *match_pattern;                 /* match pattern for format */
+    int32               cnt;                            /* proceed count */
+    int32               switches;                       /* flags */
+#define EXP_TYP_PERSIST         (SWMASK ('P'))      /* rule persists after match, default is once a rule matches, it is removed */
+#define EXP_TYP_CLEARALL        (SWMASK ('C'))      /* clear all rules after matching this rule, default is to once a rule matches, it is removed */
+#define EXP_TYP_REGEX           (SWMASK ('R'))      /* rule pattern is a regular expression */
+#define EXP_TYP_REGEX_I         (SWMASK ('I'))      /* regular expression pattern matching should be case independent */
+#if defined(USE_REGEX)
+    regex_t             regex;                          /* compiled regular expression */
+#endif
+    char                *act;                           /* action string */
+    };
+
+/* Expect Context */
+
+struct sim_expect {
+    struct sim_device   *dptr;                          /* Device (for Debug) */
+    uint32              dbit;                           /* Debugging Bit */
+    struct sim_exptab   *rules;                         /* match rules */
+    int32               size;                           /* count of match rules */
+    uint32              after;                          /* delay before halting */
+    uint8               *buf;                           /* buffer of output data which has produced */
+    uint32              buf_ins;                        /* buffer insertion point for the next output data */
+    uint32              buf_size;                       /* buffer size */
+    };
+
+/* Send Context */
+
+struct sim_send {
+    uint32              delay;                          /* instruction delay between sent data */
+#define SEND_DEFAULT_DELAY  1000                        /* default delay instruction count */
+    struct sim_device   *dptr;                          /* Device (for Debug) */
+    uint32              dbit;                           /* Debugging Bit */
+    uint32              after;                          /* instruction delay before sending any data */
+    double              next_time;                      /* execution time when next data can be sent */
+    uint8               *buffer;                        /* buffer */
+    size_t              bufsize;                        /* buffer size */
+    int32               insoff;                         /* insert offset */
+    int32               extoff;                         /* extra offset */
+    };
+
 /* Debug table */
 
 struct sim_debtab {
@@ -640,10 +703,12 @@ struct sim_debtab {
     char                *desc;                          /* description */
     };
 
+/* Deprecated Debug macros.  Use sim_debug() */
+
 #define DEBUG_PRS(d)    (sim_deb && d.dctrl)
 #define DEBUG_PRD(d)    (sim_deb && d->dctrl)
 #define DEBUG_PRI(d,m)  (sim_deb && (d.dctrl & (m)))
-#define DEBUG_PRJ(d,m)  (sim_deb && (d->dctrl & (m)))
+#define DEBUG_PRJ(d,m)  (sim_deb && ((d)->dctrl & (m)))
 
 #define SIM_DBG_EVENT       0x10000
 #define SIM_DBG_ACTIVATE    0x20000
@@ -745,6 +810,9 @@ typedef struct sim_shtab SHTAB;
 typedef struct sim_mtab MTAB;
 typedef struct sim_schtab SCHTAB;
 typedef struct sim_brktab BRKTAB;
+typedef struct sim_exptab EXPTAB;
+typedef struct sim_expect EXPECT;
+typedef struct sim_send SEND;
 typedef struct sim_debtab DEBTAB;
 typedef struct sim_fileref FILEREF;
 typedef struct sim_bitfield BITFIELD;
@@ -783,7 +851,6 @@ extern pthread_t sim_asynch_main_threadid;
 extern UNIT * volatile sim_asynch_queue;
 extern UNIT * volatile sim_wallclock_queue;
 extern UNIT * volatile sim_wallclock_entry;
-extern UNIT * volatile sim_clock_cosched_queue;
 extern volatile t_bool sim_idle_wait;
 extern int32 sim_asynch_check;
 extern int32 sim_asynch_latency;
@@ -859,21 +926,24 @@ extern int32 sim_asynch_inst_latency;
             if ((uptr)->a_next == NULL)                           \
                 (uptr)->a_due_time = (uptr)->a_usec_delay = 0;    \
             else {                                                \
-                if ((uptr) == sim_clock_cosched_queue) {          \
-                    sim_clock_cosched_queue = (uptr)->a_next;     \
-                    (uptr)->a_next = NULL;                        \
-                    }                                             \
-                else                                              \
-                    for (cptr = sim_clock_cosched_queue;          \
-                        (cptr != QUEUE_LIST_END);                 \
-                        cptr = cptr->a_next)                      \
-                        if (cptr->a_next == (uptr)) {             \
-                            cptr->a_next = (uptr)->a_next;        \
-                            (uptr)->a_next = NULL;                \
-                            break;                                \
-                            }                                     \
-                if ((uptr)->a_next == NULL) {                     \
-                    sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Canceling Clock Coscheduling Event for %s\n", sim_uname(uptr));\
+                int tmr;                                          \
+                for (tmr=0; tmr<SIM_NTIMERS; tmr++) {             \
+                    if ((uptr) == sim_clock_cosched_queue[tmr]) { \
+                        sim_clock_cosched_queue[tmr] = (uptr)->a_next; \
+                        (uptr)->a_next = NULL;                    \
+                        }                                         \
+                    else                                          \
+                        for (cptr = sim_clock_cosched_queue[tmr]; \
+                            (cptr != QUEUE_LIST_END);             \
+                            cptr = cptr->a_next)                  \
+                            if (cptr->a_next == (uptr)) {         \
+                                cptr->a_next = (uptr)->a_next;    \
+                                (uptr)->a_next = NULL;            \
+                                break;                            \
+                                }                                 \
+                    if ((uptr)->a_next == NULL) {                 \
+                        sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Canceling Clock Coscheduling Event for %s\n", sim_uname(uptr));\
+                        }                                         \
                     }                                             \
                 }                                                 \
             while (sim_timer_event_canceled) {                    \
@@ -1026,6 +1096,7 @@ extern int32 sim_asynch_inst_latency;
 #define AIO_QUEUE_MODE "Lock free asynchronous event queue access"
 #define AIO_INIT                                                  \
     if (1) {                                                      \
+      int tmr;                                                    \
       sim_asynch_main_threadid = pthread_self();                  \
       /* Empty list/list end uses the point value (void *)1.      \
          This allows NULL in an entry's a_next pointer to         \
@@ -1033,7 +1104,8 @@ extern int32 sim_asynch_inst_latency;
       sim_asynch_queue = QUEUE_LIST_END;                          \
       sim_wallclock_queue = QUEUE_LIST_END;                       \
       sim_wallclock_entry = NULL;                                 \
-      sim_clock_cosched_queue = QUEUE_LIST_END;                   \
+      for (tmr=0; tmr<SIM_NTIMERS; tmr++)                         \
+          sim_clock_cosched_queue[tmr] = QUEUE_LIST_END;          \
       }                                                           \
     else                                                          \
       (void)0

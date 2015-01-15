@@ -51,7 +51,7 @@
 #include "wd179x.h"
 
 #ifdef DBG_MSG
-#define DBG_PRINT(args) printf args
+#define DBG_PRINT(args) sim_printf args
 #else
 #define DBG_PRINT(args)
 #endif
@@ -208,28 +208,35 @@ static UNIT wd179x_unit[] = {
     { UDATA (&wd179x_svc, UNIT_FIX + UNIT_ATTABLE + UNIT_DISABLE + UNIT_ROABLE, WD179X_CAPACITY), 58200 }
 };
 
+#define WD179X_NAME "Western Digital FDC Core WD179X"
+
 static MTAB wd179x_mod[] = {
-    { MTAB_XTD|MTAB_VDV,    0,                      "IOBASE",   "IOBASE",   &set_iobase, &show_iobase, NULL },
-    { UNIT_WD179X_WLK,      0,                      "WRTENB",   "WRTENB",   NULL },
-    { UNIT_WD179X_WLK,      UNIT_WD179X_WLK,        "WRTLCK",   "WRTLCK",   NULL },
+    { MTAB_XTD|MTAB_VDV,    0,                      "IOBASE",   "IOBASE",
+        &set_iobase, &show_iobase, NULL, "Sets disk controller I/O base address"    },
+    { UNIT_WD179X_WLK,      0,                      "WRTENB",   "WRTENB",
+        NULL, NULL, NULL, "Enables " WD179X_NAME "n for writing"                    },
+    { UNIT_WD179X_WLK,      UNIT_WD179X_WLK,        "WRTLCK",   "WRTLCK",
+        NULL, NULL, NULL, "Locks " WD179X_NAME "n for writing"                      },
     /* quiet, no warning messages       */
-    { UNIT_WD179X_VERBOSE,  0,                      "QUIET",    "QUIET",    NULL },
+    { UNIT_WD179X_VERBOSE,  0,                      "QUIET",    "QUIET",
+        NULL, NULL, NULL, "No verbose messages for unit " WD179X_NAME "n"           },
     /* verbose, show warning messages   */
-    { UNIT_WD179X_VERBOSE,  UNIT_WD179X_VERBOSE,    "VERBOSE",  "VERBOSE",  NULL },
+    { UNIT_WD179X_VERBOSE,  UNIT_WD179X_VERBOSE,    "VERBOSE",  "VERBOSE",
+        NULL, NULL, NULL, "Verbose messages for unit " WD179X_NAME "n"              },
     { 0 }
 };
 
 /* Debug Flags */
 static DEBTAB wd179x_dt[] = {
-    { "ERROR",  ERROR_MSG },
-    { "SEEK",   SEEK_MSG },
-    { "CMD",    CMD_MSG },
-    { "RDDATA", RD_DATA_MSG },
-    { "WRDATA", WR_DATA_MSG },
-    { "STATUS", STATUS_MSG },
-    { "FMT",    FMT_MSG },
-    { "VERBOSE",VERBOSE_MSG },
-    { NULL,     0 }
+    { "ERROR",      ERROR_MSG,      "Error messages"    },
+    { "SEEK",       SEEK_MSG,       "Seek messages"     },
+    { "CMD",        CMD_MSG,        "Command messages"  },
+    { "READ",       RD_DATA_MSG,    "Read messages"     },
+    { "WRITE",      WR_DATA_MSG,    "Write messages"    },
+    { "STATUS",     STATUS_MSG,     "Status messages"   },
+    { "FMT",        FMT_MSG,        "Format messages"   },
+    { "VERBOSE",    VERBOSE_MSG,    "Verbose messages"  },
+    { NULL,         0                                   }
 };
 
 DEVICE wd179x_dev = {
@@ -238,7 +245,7 @@ DEVICE wd179x_dev = {
     NULL, NULL, &wd179x_reset,
     NULL, &wd179x_attach, &wd179x_detach,
     &wd179x_info_data, (DEV_DISABLE | DEV_DIS | DEV_DEBUG), ERROR_MSG,
-    wd179x_dt, NULL, "Western Digital FDC Core WD179X"
+    wd179x_dt, NULL, WD179X_NAME
 };
 
 /* Unit service routine */
@@ -265,7 +272,7 @@ static t_stat wd179x_reset(DEVICE *dptr)
     } else {
         /* Connect I/O Ports at base address */
         if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &wd179xdev, FALSE) != 0) {
-            printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
+            sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
     }
@@ -326,14 +333,14 @@ t_stat wd179x_attach(UNIT *uptr, char *cptr)
     if(uptr->capac > 0) {
         char *rtn = fgets(header, 4, uptr->fileref);
         if ((rtn != NULL) && strncmp(header, "IMD", 3)) {
-            printf("WD179X: Only IMD disk images are supported\n");
+            sim_printf("WD179X: Only IMD disk images are supported\n");
             wd179x_info->drive[i].uptr = NULL;
             return SCPE_OPENERR;
         }
     } else {
         /* create a disk image file in IMD format. */
         if (diskCreate(uptr->fileref, "$Id: wd179x.c 1999 2008-07-22 04:25:28Z hharte $") != SCPE_OK) {
-            printf("WD179X: Failed to create IMD disk.\n");
+            sim_printf("WD179X: Failed to create IMD disk.\n");
             wd179x_info->drive[i].uptr = NULL;
             return SCPE_OPENERR;
         }
@@ -343,18 +350,19 @@ t_stat wd179x_attach(UNIT *uptr, char *cptr)
     uptr->u3 = IMAGE_TYPE_IMD;
 
     if (uptr->flags & UNIT_WD179X_VERBOSE)
-        printf("WD179X%d: attached to '%s', type=%s, len=%d\n", i, cptr,
+        sim_printf("WD179X%d: attached to '%s', type=%s, len=%d\n", i, cptr,
             uptr->u3 == IMAGE_TYPE_IMD ? "IMD" : uptr->u3 == IMAGE_TYPE_CPT ? "CPT" : "DSK",
             uptr->capac);
 
     if(uptr->u3 == IMAGE_TYPE_IMD) {
         if (uptr->flags & UNIT_WD179X_VERBOSE)
-            printf("--------------------------------------------------------\n");
-        wd179x_info->drive[i].imd = diskOpen(uptr->fileref, uptr->flags & UNIT_WD179X_VERBOSE);
+            sim_printf("--------------------------------------------------------\n");
+        wd179x_info->drive[i].imd = diskOpenEx(uptr->fileref, uptr->flags & UNIT_WD179X_VERBOSE,
+                                               &wd179x_dev, VERBOSE_MSG, VERBOSE_MSG);
         if (uptr->flags & UNIT_WD179X_VERBOSE)
-            printf("\n");
+            sim_printf("\n");
         if (wd179x_info->drive[i].imd == NULL) {
-            printf("WD179X: IMD disk corrupt.\n");
+            sim_printf("WD179X: IMD disk corrupt.\n");
             wd179x_info->drive[i].uptr = NULL;
             return SCPE_OPENERR;
         }
@@ -874,7 +882,7 @@ static uint8 Do1793Command(uint8 cCommand)
                     wd179x_info->index_pulse_wait = TRUE;
                     if(wd179x_info->sel_drive < WD179X_MAX_DRIVES) {
                         sim_activate (wd179x_unit, ((wd179x_info->drive[wd179x_info->sel_drive].imd->ntracks % 77) == 0) ? CROMFDC_8IN_ROT : CROMFDC_5IN_ROT); /* Generate INDEX pulse */
-/*                      printf("Drive %d Num tracks=%d\n", wd179x_info->sel_drive, wd179x_info->drive[wd179x_info->sel_drive].imd->ntracks); */
+/*                      sim_printf("Drive %d Num tracks=%d\n", wd179x_info->sel_drive, wd179x_info->drive[wd179x_info->sel_drive].imd->ntracks); */
                     }
                 } else {
                     wd179x_info->intrq = 1;

@@ -731,7 +731,29 @@ while (reason == 0)  {
 
     AIO_CHECK_EVENT;
     if (sim_interval <= 0) {                            /* intv cnt expired? */
+        /* Make sure all intermediate state is visible in simh registers */
+        PSW = get_PSW ();
+        for (i = 0; i < 6; i++)
+            REGFILE[i][rs] = R[i];
+        STACKFILE[cm] = SP;
+        saved_PC = PC & 0177777;
+        pcq_r->qptr = pcq_p;                            /* update pc q ptr */
+        set_r_display (rs, cm);
+
         reason = sim_process_event ();                  /* process events */
+
+        /* restore simh register contents into running variables */
+        PC = saved_PC;
+        put_PSW (PSW, 0);                               /* set PSW, call calc_xs */
+        for (i = 0; i < 6; i++)
+            R[i] = REGFILE[i][rs];
+        SP = STACKFILE[cm];
+        isenable = calc_is (cm);
+        dsenable = calc_ds (cm);
+        put_PIRQ (PIRQ);                                /* rewrite PIRQ */
+        STKLIM = STKLIM & STKLIM_RW;                    /* clean up STKLIM */
+        MMR0 = MMR0 | MMR0_IC;                          /* usually on */
+
         trap_req = calc_ints (ipl, trap_req);           /* recalc int req */
         continue;
         }                                               /* end if sim_interval */
@@ -810,11 +832,7 @@ while (reason == 0)  {
     if (tbit)
         setTRAP (TRAP_TRC);
     if (wait_state) {                                   /* wait state? */
-        if (sim_idle_enab)                              /* idle enabled? */
-            sim_idle (TMR_CLK, TRUE);
-        else if (wait_enable)                           /* old style idle? */
-            sim_interval = 0;                           /* force check */
-        else sim_interval = sim_interval - 1;           /* count cycle */
+        sim_idle (TMR_CLK, TRUE);
         continue;
         }
 
@@ -1515,7 +1533,7 @@ while (reason == 0)  {
                 Z = V = C = 1;                          /* N = 0, Z = 1 */
                 break;
                 }
-            if ((src == 020000000000) && (src2 == 0177777)) {
+            if ((((uint32)src) == 020000000000) && (src2 == 0177777)) {
                 V = 1;                                  /* J11,11/70 compat */
                 N = Z = C = 0;                          /* N = Z = 0 */
                 break;
@@ -3044,9 +3062,7 @@ static t_bool caveats_displayed = FALSE;
 
 if (!caveats_displayed) {
     caveats_displayed = TRUE;
-    printf ("%s", cpu_next_caveats);
-    if (sim_log)
-        fprintf (sim_log, "%s", cpu_next_caveats);
+    sim_printf ("%s", cpu_next_caveats);
     }
 if (SCPE_OK != get_aval (PC, &cpu_dev, &cpu_unit))      /* get data */
     return FALSE;
@@ -3135,7 +3151,6 @@ return iopageW ((int32) val, addr, WRITEC);
 
 void set_r_display (int32 rs, int32 cm)
 {
-extern REG *find_reg (char *cptr, char **optr, DEVICE *dptr);
 REG *rptr;
 int32 i;
 

@@ -115,6 +115,8 @@ t_stat xu_show_stats (FILE* st, UNIT* uptr, int32 val, void* desc);
 t_stat xu_set_stats  (UNIT* uptr, int32 val, char* cptr, void* desc);
 t_stat xu_show_type (FILE* st, UNIT* uptr, int32 val, void* desc);
 t_stat xu_set_type (UNIT* uptr, int32 val, char* cptr, void* desc);
+t_stat xu_show_throttle (FILE* st, UNIT* uptr, int32 val, void* desc);
+t_stat xu_set_throttle (UNIT* uptr, int32 val, char* cptr, void* desc);
 int32 xu_int (void);
 t_stat xu_ex (t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat xu_dep (t_value val, t_addr addr, UNIT *uptr, int32 sw);
@@ -145,7 +147,10 @@ struct xu_device    xua = {
   xua_read_callback,                        /* read callback routine */
   xua_write_callback,                       /* write callback routine */
   {0x08, 0x00, 0x2B, 0xCC, 0xDD, 0xEE},     /* mac */
-  XU_T_DELUA                                /* type */
+  XU_T_DELUA,                               /* type */
+  ETH_THROT_DEFAULT_TIME,                   /* ms throttle window */
+  ETH_THROT_DEFAULT_BURST,                  /* packet packet burst in throttle window */
+  ETH_THROT_DISABLED_DELAY                  /* throttle disabled */
   };
 
 MTAB xu_mod[] = {
@@ -172,6 +177,8 @@ MTAB xu_mod[] = {
     NULL, &xu_show_filters, NULL, "Display MAC addresses which will be received" },
   { MTAB_XTD|MTAB_VDV, 0, "TYPE", "TYPE={DEUNA|DELUA}",
     &xu_set_type, &xu_show_type, NULL, "Display the controller type" },
+  { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "THROTTLE", "THROTTLE=DISABLED|TIME=n{;BURST=n{;DELAY=n}}",
+    &xu_set_throttle, &xu_show_throttle, NULL, "Display transmit throttle configuration" },
   { 0 },
 };
 
@@ -208,6 +215,9 @@ REG xua_reg[] = {
   { BRDATA ( TXHDR,   xua.txhdr,    XU_RDX, 16, 4), REG_HRO},
   { GRDATA ( BA,      xua_dib.ba,   XU_RDX, 32, 0), REG_HRO},
   { GRDATA ( VECTOR,  xua_dib.vec,  XU_RDX, 32, 0), REG_HRO},
+  { GRDATA ( THR_TIME, xua.throttle_time, XU_RDX, 32, 0), REG_HRO},
+  { GRDATA ( THR_BURST, xua.throttle_burst, XU_RDX, 32, 0), REG_HRO},
+  { GRDATA ( THR_DELAY, xua.throttle_delay, XU_RDX, 32, 0), REG_HRO},
   { NULL }  };
 
 DEBTAB xu_debug[] = {
@@ -235,14 +245,18 @@ DIB xub_dib = { IOBA_AUTO, IOLN_XU, &xu_rd, &xu_wr,
                 1, IVCL (XU), 0, { &xu_int }, IOLN_XU };
 
 UNIT xub_unit[] = {
- { UDATA (&xu_svc, UNIT_IDLE|UNIT_ATTABLE|UNIT_DISABLE, 0) }      /* receive timer */
+ { UDATA (&xu_svc, UNIT_IDLE|UNIT_ATTABLE|UNIT_DISABLE, 0) },     /* receive timer */
+ { UDATA (&xu_tmrsvc, UNIT_IDLE|UNIT_DIS, 0) }
 };
 
 struct xu_device    xub = {
   xub_read_callback,                        /* read callback routine */
   xub_write_callback,                       /* write callback routine */
   {0x08, 0x00, 0x2B, 0xDD, 0xEE, 0xFF},     /* mac */
-  XU_T_DELUA                                /* type */
+  XU_T_DELUA,                               /* type */
+  ETH_THROT_DEFAULT_TIME,                   /* ms throttle window */
+  ETH_THROT_DEFAULT_BURST,                  /* packet packet burst in throttle window */
+  ETH_THROT_DISABLED_DELAY                  /* throttle disabled */
   };
 
 REG xub_reg[] = {
@@ -278,11 +292,14 @@ REG xub_reg[] = {
   { BRDATA ( TXHDR,   xub.txhdr,    XU_RDX, 16, 4), REG_HRO},
   { GRDATA ( BA,      xub_dib.ba,   XU_RDX, 32, 0), REG_HRO},
   { GRDATA ( VECTOR,  xub_dib.vec,  XU_RDX, 32, 0), REG_HRO},
+  { GRDATA ( THR_TIME, xub.throttle_time, XU_RDX, 32, 0), REG_HRO},
+  { GRDATA ( THR_BURST, xub.throttle_burst, XU_RDX, 32, 0), REG_HRO},
+  { GRDATA ( THR_DELAY, xub.throttle_delay, XU_RDX, 32, 0), REG_HRO},
   { NULL }  };
 
 DEVICE xub_dev = {
   "XUB", xub_unit, xub_reg, xu_mod,
-  1, XU_RDX, 8, 1, XU_RDX, 8,
+  2, XU_RDX, 8, 1, XU_RDX, 8,
   &xu_ex, &xu_dep, &xu_reset,
   NULL, &xu_attach, &xu_detach,
   &xub_dib, DEV_DISABLE | DEV_DIS | DEV_UBUS | DEV_DEBUG | DEV_ETHER,
@@ -439,6 +456,78 @@ t_stat xu_set_type (UNIT* uptr, int32 val, char* cptr, void* desc)
   return SCPE_OK;
 }
 
+t_stat xu_show_throttle (FILE* st, UNIT* uptr, int32 val, void* desc)
+{
+  CTLR* xu = xu_unit2ctlr(uptr);
+
+  if (xu->var->throttle_delay == ETH_THROT_DISABLED_DELAY)
+    fprintf(st, "throttle=disabled");
+  else
+    fprintf(st, "throttle=time=%d;burst=%d;delay=%d", xu->var->throttle_time, xu->var->throttle_burst, xu->var->throttle_delay);
+  return SCPE_OK;
+}
+
+t_stat xu_set_throttle (UNIT* uptr, int32 val, char* cptr, void* desc)
+{
+  CTLR* xu = xu_unit2ctlr(uptr);
+  char tbuf[CBUFSIZE], gbuf[CBUFSIZE];
+  char *tptr = cptr;
+  uint32 newval;
+  uint32 set_time = xu->var->throttle_time;
+  uint32 set_burst = xu->var->throttle_burst;
+  uint32 set_delay = xu->var->throttle_delay;
+  t_stat r = SCPE_OK;
+
+  if (!cptr) {
+    xu->var->throttle_delay = ETH_THROT_DEFAULT_DELAY;
+    eth_set_throttle (xu->var->etherface, xu->var->throttle_time, xu->var->throttle_burst, xu->var->throttle_delay);
+    return SCPE_OK;
+    }
+
+  /* this assumes that the parameter has already been upcased */
+  if ((!strcmp (cptr, "ON")) ||
+      (!strcmp (cptr, "ENABLED")))
+    xu->var->throttle_delay = ETH_THROT_DEFAULT_DELAY;
+  else
+    if ((!strcmp (cptr, "OFF")) ||
+        (!strcmp (cptr, "DISABLED")))
+      xu->var->throttle_delay = ETH_THROT_DISABLED_DELAY;
+    else {
+      if (set_delay == ETH_THROT_DISABLED_DELAY)
+        set_delay = ETH_THROT_DEFAULT_DELAY;
+      while (*tptr) {
+        tptr = get_glyph_nc (tptr, tbuf, ';');
+        cptr = tbuf;
+        cptr = get_glyph (cptr, gbuf, '=');
+        if ((NULL == cptr) || ('\0' == *cptr))
+          return SCPE_ARG;
+        newval = (uint32)get_uint (cptr, 10, 100, &r);
+        if (r != SCPE_OK)
+          return SCPE_ARG;
+        if (!MATCH_CMD(gbuf, "TIME")) {
+          set_time = newval;
+          }
+        else
+          if (!MATCH_CMD(gbuf, "BURST")) {
+            if (newval > 30)
+               return SCPE_ARG;
+            set_burst = newval;
+            }
+          else
+            if (!MATCH_CMD(gbuf, "DELAY")) {
+              set_delay = newval;
+              }
+            else
+              return SCPE_ARG;
+        }
+      xu->var->throttle_time = set_time;
+      xu->var->throttle_burst = set_burst;
+      xu->var->throttle_delay = set_delay;
+      }
+  eth_set_throttle (xu->var->etherface, xu->var->throttle_time, xu->var->throttle_burst, xu->var->throttle_delay);
+  return SCPE_OK;
+}
+
 /*============================================================================*/
 
 void upd_stat16(uint16* stat, uint16 add)
@@ -530,12 +619,14 @@ void xu_read_callback(CTLR* xu, int status)
   if (DBG_PCK & xu->dev->dctrl)
       eth_packet_trace_ex(xu->var->etherface, xu->var->read_buffer.msg, xu->var->read_buffer.len, "xu-recvd", DBG_DAT & xu->dev->dctrl, DBG_PCK);
 
+  xu->var->read_buffer.used = 0;  /* none processed yet */
+
   /* process any packets locally that can be */
   status = xu_process_local (xu, &xu->var->read_buffer);
 
   /* add packet to read queue */
   if (status != SCPE_OK)
-    ethq_insert(&xu->var->ReadQ, 2, &xu->var->read_buffer, 0);
+    ethq_insert(&xu->var->ReadQ, ETH_ITM_NORMAL, &xu->var->read_buffer, 0);
 }
 
 void xua_read_callback(int status)
@@ -1091,7 +1182,7 @@ int32 xu_command(CTLR* xu)
 void xu_process_receive(CTLR* xu)
 {
   uint32 segb, ba;
-  int slen, wlen, off = 0;
+  int slen, wlen;
   t_stat rstatus, wstatus;
   ETH_ITEM* item = 0;
   int state = xu->var->pcsr1 & PCSR1_STATE;
@@ -1135,6 +1226,9 @@ void xu_process_receive(CTLR* xu)
     slen = xu->var->rxhdr[0];
     segb = xu->var->rxhdr[1] + ((xu->var->rxhdr[2] & 3) << 16);
 
+    /* Initially clear status bits which are conditionally set below */
+    xu->var->rxhdr[2] &= ~(RXR_FRAM|RXR_OFLO|RXR_CRC|RXR_STF|RXR_ENF);
+
     /* get first packet from receive queue */
     if (!item) {
       item = &xu->var->ReadQ.item[xu->var->ReadQ.head];
@@ -1163,10 +1257,8 @@ void xu_process_receive(CTLR* xu)
     }
 
     /* is this the start of frame? */
-    if (item->packet.used == 0) {
+    if (item->packet.used == 0)
       xu->var->rxhdr[2] |= RXR_STF;
-      off = 0;
-    }
 
     /* figure out chained packet size */
     wlen = item->packet.crc_len - item->packet.used;
@@ -1174,7 +1266,7 @@ void xu_process_receive(CTLR* xu)
       wlen = slen;
 
     /* transfer chained packet to host buffer */
-    wstatus = Map_WriteB (segb, wlen, &item->packet.msg[off]);
+    wstatus = Map_WriteB (segb, wlen, &item->packet.msg[item->packet.used]);
     if (wstatus) {
       /* error during write */
       xu->var->stat |= STAT_ERRS | STAT_MERR | STAT_TMOT | STAT_RRNG;
@@ -1184,34 +1276,35 @@ void xu_process_receive(CTLR* xu)
 
     /* update chained counts */
     item->packet.used += wlen;
-    off += wlen;
 
-    /* Is this the end-of-frame? */
-    if (item->packet.used == item->packet.crc_len) {
+    /*
+     * Fill in the Received Message Length field.
+     * The documenation notes that the DEUNA actually performs
+     * a full CRC check on the data buffer, and adds this CRC
+     * value to the data, in the last 4 bytes.  The question
+     * is: does MLEN include these 4 bytes, or not???  --FvK
+     *
+     * A quick look at the RSX Process Software driver shows
+     * that the CRC byte count(4) is added to MLEN, but does
+     * not show if the DEUNA/DELUA actually transfers the
+     * CRC bytes to the host buffers, since the driver never
+     * tries to use them. However, since the host max buffer
+     * size is only 1514, not 1518, I doubt the CRC is actually
+     * transferred in normal mode. Maybe CRC is transferred
+     * and used in Loopback mode.. -- DTH
+     *
+     * The VMS XEDRIVER indicates that CRC is transferred as
+     * part of the packet, and is included in the MLEN count. -- DTH
+     */
+    xu->var->rxhdr[3] &= ~RXR_MLEN;
+    xu->var->rxhdr[3] |= wlen;
+
+    /* Is this the end-of-frame? OR is buffer chaining disabled? */
+    if ((item->packet.used == item->packet.crc_len) ||
+        (xu->var->mode & MODE_DRDC)) {
       /* mark end-of-frame */
       xu->var->rxhdr[2] |= RXR_ENF;
 
-      /*
-       * Fill in the Received Message Length field.
-       * The documenation notes that the DEUNA actually performs
-       * a full CRC check on the data buffer, and adds this CRC
-       * value to the data, in the last 4 bytes.  The question
-       * is: does MLEN include these 4 bytes, or not???  --FvK
-       *
-       * A quick look at the RSX Process Software driver shows
-       * that the CRC byte count(4) is added to MLEN, but does
-       * not show if the DEUNA/DELUA actually transfers the
-       * CRC bytes to the host buffers, since the driver never
-       * tries to use them. However, since the host max buffer
-       * size is only 1514, not 1518, I doubt the CRC is actually
-       * transferred in normal mode. Maybe CRC is transferred
-       * and used in Loopback mode.. -- DTH
-       *
-       * The VMS XEDRIVER indicates that CRC is transferred as
-       * part of the packet, and is included in the MLEN count. -- DTH
-       */
-      xu->var->rxhdr[3] &= ~RXR_MLEN;
-      xu->var->rxhdr[3] |= (item->packet.crc_len);
       if (xu->var->mode & MODE_DRDC) /* data chaining disabled */
         xu->var->rxhdr[3] |= RXR_NCHN;
 
@@ -1336,7 +1429,7 @@ void xu_process_transmit(CTLR* xu)
       /* are we in internal loopback mode ? */
       if ((xu->var->mode & MODE_LOOP) && (xu->var->mode & MODE_INTL)) {
         /* just put packet in  receive buffer */
-        ethq_insert (&xu->var->ReadQ, 1, &xu->var->write_buffer, 0);
+        ethq_insert (&xu->var->ReadQ, ETH_ITM_LOOPBACK, &xu->var->write_buffer, 0);
       } else {
         /* transmit packet synchronously - write callback sets status */
         wstatus = eth_write(xu->var->etherface, &xu->var->write_buffer, xu->var->wcallback);
@@ -1655,6 +1748,7 @@ t_stat xu_attach(UNIT* uptr, char* cptr)
     xu->var->etherface = 0;
     return status;
   }
+  eth_set_throttle (xu->var->etherface, xu->var->throttle_time, xu->var->throttle_burst, xu->var->throttle_delay);
   if (SCPE_OK != eth_check_address_conflict (xu->var->etherface, &xu->var->mac)) {
     char buf[32];
 
@@ -1702,14 +1796,15 @@ t_stat xu_detach(UNIT* uptr)
   sim_debug(DBG_TRC, xu->dev, "xu_detach()\n");
 
   if (uptr->flags & UNIT_ATT) {
-    sim_cancel (uptr);                  /* stop the receiver */
-    sim_cancel (uptr+1);                /* stop the timer services */
     eth_close (xu->var->etherface);
     free(xu->var->etherface);
-    xu->var->etherface = 0;
+    xu->var->etherface = NULL;
     free(uptr->filename);
     uptr->filename = NULL;
     uptr->flags &= ~UNIT_ATT;
+    /* cancel service timers */
+    sim_cancel (uptr);                  /* stop the receiver */
+    sim_cancel (uptr+1);                /* stop the timer services */
   }
   return SCPE_OK;
 }
@@ -1806,7 +1901,7 @@ fprintf (st, "real Ethernet interface.\n\n");
 eth_attach_help(st, dptr, uptr, flag, cptr);
 fprintf (st, "One final note: because of its asynchronous nature, the XU controller is not\n");
 fprintf (st, "limited to the ~1.5Mbit/sec of the real DEUNA/DELUA controllers, nor the\n");
-fprintf (st, "10Mbit/sec of a standard Ethernet.  Attach it to a Fast Ethernet (100 Mbit/sec)\n");
+fprintf (st, "10Mbit/sec of a standard Ethernet.  Attach it to a Fast or Gigabit Ethernet\n");
 fprintf (st, "card, and \"Feel the Power!\" :-)\n");
 return SCPE_OK;
 }

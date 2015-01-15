@@ -700,11 +700,10 @@ static const char *devnam[NUMDEV] = {
 t_stat fprint_sym (FILE *of, t_addr addr, t_value *val,
     UNIT *uptr, int32 sw)
 {
-int32 i, j, c, cflag, ac, xr, y, dev;
+int32 i, j, c, ac, xr, y, dev;
 d10 inst;
 
 inst = val[0];
-cflag = (uptr == NULL) || (uptr == &cpu_unit);
 if (sw & SWMASK ('A')) {                                /* ASCII? */
     if (inst > 0377)
         return SCPE_ARG;
@@ -781,7 +780,7 @@ t_value get_opnd (char *cptr, t_stat *status)
 {
 int32 sign = 0;
 t_value val, xr = 0, ind = 0;
-char *tptr;
+const char *tptr;
 
 *status = SCPE_ARG;                                     /* assume fail */
 if (*cptr == '@') {
@@ -799,14 +798,14 @@ if (val > 0777777)
     return 0;
 if (sign)
     val = (~val + 1) & 0777777;
-cptr = tptr;
+cptr = (char *)tptr;
 if (*cptr == '(') {
     cptr++;
     xr = strtotv (cptr, &tptr, 8);
     if ((cptr == tptr) || (*tptr != ')') ||
         (xr > AC_NUM) || (xr == 0))
         return 0;
-    cptr = ++tptr;
+    cptr = (char *)++tptr;
     }
 if (*cptr == 0)
     *status = SCPE_OK;
@@ -827,12 +826,11 @@ return (ind | (xr << 18) | val);
 
 t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
-int32 cflag, i, j;
+int32 i, j;
 t_value ac, dev;
 t_stat r;
 char gbuf[CBUFSIZE];
 
-cflag = (uptr == NULL) || (uptr == &cpu_unit);
 while (isspace (*cptr)) cptr++;
 for (i = 0; i < 6; i++) {
     if (cptr[i] == 0) {

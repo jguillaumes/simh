@@ -31,6 +31,8 @@
    11-Jun-2013  MB      First version
 */
 
+#if !defined(VAX_620)
+
 #include "vax_defs.h"
 #include "sim_video.h"
 #include "vax_2681.h"
@@ -864,14 +866,11 @@ if (!vid_active)  {
         vid_close ();
         return SCPE_MEM;
         }
-    printf ("QVSS Display Created.  ");
+    sim_printf ("QVSS Display Created.  ");
     vid_show_release_key (stdout, NULL, 0, NULL);
-    printf ("\n");
-    if (sim_log) {
-        fprintf (sim_log, "QVSS Display Created.  ");
+    if (sim_log)
         vid_show_release_key (sim_log, NULL, 0, NULL);
-        fprintf (sim_log, "\n");
-        }
+    sim_printf ("\n");
     }
 sim_activate_abs (&vc_unit, tmxr_poll);
 return auto_config (NULL, 0);                           /* run autoconfig */
@@ -897,3 +896,5 @@ char *vc_description (DEVICE *dptr)
 {
 return "VCB01 Monochrome Graphics Adapter";
 }
+
+#endif /* !VAX_620 */

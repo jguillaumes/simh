@@ -211,30 +211,30 @@ r = rand();
 rmax = (double)RAND_MAX;
 #endif
 if (msg[0] == DDCMP_ENQ) {
-    int eat =  0 + (int) (2000.0 * (r / rmax));
+    int eat =  0 + (int) (2000.0 * (r / (rmax + 1.0)));
     
     if (eat <= (trollHungerLevel * 2)) {    /* Hungry? */
         if (eat <= trollHungerLevel) {      /* Eat the packet */
-            sprintf (msgbuf, "troll ate a %s control message", rx ? "RCV" : "XMT");
+            sprintf (msgbuf, "troll ate a %s control message\n", rx ? "RCV" : "XMT");
             tmxr_debug_msg (rx ? DDCMP_DBG_PRCV : DDCMP_DBG_PXMT, lp, msgbuf);
             return TRUE;
             }
-        sprintf (msgbuf, "troll bit a %s control message", rx ? "RCV" : "XMT");
+        sprintf (msgbuf, "troll bit a %s control message\n", rx ? "RCV" : "XMT");
         tmxr_debug_msg (rx ? DDCMP_DBG_PRCV : DDCMP_DBG_PXMT, lp, msgbuf);
         msg[6] ^= rx? 0114: 0154;           /* Eat the CRC */
         }
     } 
 else {
-    int eat =  0 + (int) (3000.0 * (r / rmax));
+    int eat =  0 + (int) (3000.0 * (r / (rmax + 1.0)));
 
     if (eat <= (trollHungerLevel * 3)) {    /* Hungry? */
         if (eat <= trollHungerLevel) {      /* Eat the packet */
-            sprintf (msgbuf, "troll ate a %s %s message", rx ? "RCV" : "XMT", (msg[0] == DDCMP_SOH)? "data" : "maintenance");
+            sprintf (msgbuf, "troll ate a %s %s message\n", rx ? "RCV" : "XMT", (msg[0] == DDCMP_SOH)? "data" : "maintenance");
             tmxr_debug_msg (rx ? DDCMP_DBG_PRCV : DDCMP_DBG_PXMT, lp, msgbuf);
             return TRUE;
             }
         if (eat <= (trollHungerLevel * 2)) { /* HCRC */
-            sprintf (msgbuf, "troll bit a %s %s message", rx ? "RCV" : "XMT", (msg[0] == DDCMP_SOH)? "data" : "maintenance");
+            sprintf (msgbuf, "troll bit a %s %s message\n", rx ? "RCV" : "XMT", (msg[0] == DDCMP_SOH)? "data" : "maintenance");
             tmxr_debug_msg (rx ? DDCMP_DBG_PRCV : DDCMP_DBG_PXMT, lp, msgbuf);
             msg[6] ^= rx? 0124: 0164;
             } 
@@ -378,6 +378,9 @@ if (!ddcmp_feedCorruptionTroll (lp, lp->txpb, FALSE, corruptrate)) {
            (SCPE_OK == (r = tmxr_putc_ln (lp, lp->txpb[lp->txppoffset]))))
        ++lp->txppoffset;
     tmxr_send_buffered_data (lp);
+    }
+else {/* Packet eaten, so discard it */
+    lp->txppoffset = lp->txppsize; /* Act like all data was sent */
     }
 return lp->conn ? SCPE_OK : SCPE_LOST;
 }

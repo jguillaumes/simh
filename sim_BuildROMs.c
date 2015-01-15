@@ -43,7 +43,7 @@ struct ROM_File_Descriptor {
    {"VAX/ka620.bin",                    "VAX/vax_ka620_bin.h",                  65536,            0xFF7F930F, "vax_ka620_bin"},
    {"VAX/ka630.bin",                    "VAX/vax_ka630_bin.h",                  65536,            0xFF7F73EF, "vax_ka630_bin"},
    {"VAX/ka610.bin",                    "VAX/vax_ka610_bin.h",                  16384,            0xFFEF3312, "vax_ka610_bin"},
-   {"VAX/vmb.exe",                      "VAX/vax_vmb_exe.h",                    44544,            0xFFC014CC, "vax_vmb_exe"},
+   {"VAX/vmb.exe",                      "VAX/vax_vmb_exe.h",                    44544,            0xFFC014BB, "vax_vmb_exe"},
    {"swtp6800/swtp6800/swtbug.bin",     "swtp6800/swtp6800/swtp_swtbug_bin.h",   1024,            0xFFFE4FBC, "swtp_swtbug_bin"},
    };
 
@@ -185,6 +185,7 @@ else
 printf ("The ROMs array entry for this new ROM image file should look something like:\n");
 printf ("{\"%s\",    \"%s\",     %d,  0x%08X, \"%s\"}\n",
         rom_filename, include_filename, (int)(statb.st_size), checksum, array_name);
+free (ROMData);
 return 1;
 }
 
@@ -259,7 +260,7 @@ if ((expected_checksum != 0) && (checksum != expected_checksum)) {
     printf ("This can happen if the file was transferred or unpacked incorrectly\n");
     printf ("and in the process tried to convert line endings rather than passing\n");
     printf ("the file's contents unmodified\n");
-    fclose (rFile);
+    free (ROMData);
     return -1;
     }
 /*
@@ -287,6 +288,7 @@ if (0 == sim_read_ROM_include(include_filename,
 
 if (NULL == (iFile = fopen (include_filename, "w"))) {
     printf ("Error Opening '%s' for output: %s\n", include_filename, strerror(errno));
+    free (ROMData);
     return -1;
     }
 load_filename = strrchr (rom_filename, '/');
