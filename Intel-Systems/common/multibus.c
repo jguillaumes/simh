@@ -68,7 +68,7 @@ extern t_stat isbc208_reset (DEVICE *dptr);
 
 /* external globals */
 
-extern uint8 xack;                          /* XACK signal */
+extern uint32 xack;                          /* XACK signal */
 extern int32 int_req;                       /* i8080 INT signal */
 
 /* multibus Standard SIMH Device Data Structures */

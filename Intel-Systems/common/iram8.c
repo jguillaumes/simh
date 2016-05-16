@@ -45,8 +45,8 @@ t_stat RAM_reset (DEVICE *dptr, int32 base, int32 size);
 int32 RAM_get_mbyte(int32 addr);
 void RAM_put_mbyte(int32 addr, int32 val);
 
-extern UNIT i8255_unit;
-extern uint8 xack;                         /* XACK signal */
+extern UNIT i8255_unit[];
+extern uint32 xack;                         /* XACK signal */
 
 /* SIMH RAM Standard I/O Data Structures */
 
@@ -122,7 +122,7 @@ int32 RAM_get_mbyte(int32 addr)
 {
     int32 val;
 
-    if (i8255_unit.u5 & 0x02) {         /* enable RAM */
+    if (i8255_unit[0].u5 & 0x02) {         /* enable RAM */
         sim_debug (DEBUG_read, &RAM_dev, "RAM_get_mbyte: addr=%04X\n", addr);
         if ((addr >= RAM_unit.u3) && ((uint32) addr < (RAM_unit.u3 + RAM_unit.capac))) {
             SET_XACK(1);                /* good memory address */
@@ -142,7 +142,7 @@ int32 RAM_get_mbyte(int32 addr)
 
 void RAM_put_mbyte(int32 addr, int32 val)
 {
-    if (i8255_unit.u5 & 0x02) {         /* enable RAM */
+    if (i8255_unit[0].u5 & 0x02) {         /* enable RAM */
         sim_debug (DEBUG_write, &RAM_dev, "RAM_put_mbyte: addr=%04X, val=%02X\n", addr, val);
         if ((addr >= RAM_unit.u3) && ((uint32)addr < RAM_unit.u3 + RAM_unit.capac)) {
             SET_XACK(1);                /* good memory address */

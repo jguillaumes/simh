@@ -47,7 +47,7 @@ int32 isbc064_get_mword(int32 addr);
 void isbc064_put_mbyte(int32 addr, int32 val);
 void isbc064_put_mword(int32 addr, int32 val);
 
-extern uint8 xack;                         /* XACK signal */
+extern uint32 xack;                         /* XACK signal */
 
 /* isbc064 Standard I/O Data Structures */
 

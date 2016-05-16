@@ -48,8 +48,8 @@ t_stat EPROM_attach (UNIT *uptr, CONST char *cptr);
 t_stat EPROM_reset (DEVICE *dptr, int32 size);
 int32 EPROM_get_mbyte(uint32 addr);
 
-extern UNIT i8255_unit;
-extern uint8 xack;						/* XACK signal */
+extern UNIT i8255_unit[];
+extern uint32 xack;						/* XACK signal */
 
 /* SIMH EPROM Standard I/O Data Structures */
 
@@ -170,7 +170,7 @@ int32 EPROM_get_mbyte(uint32 addr)
 {
     int32 val;
 
-    if (i8255_unit.u5 & 0x01) {         /* EPROM enabled */
+    if (i8255_unit[0].u5 & 0x01) {         /* EPROM enabled */
         sim_debug (DEBUG_read, &EPROM_dev, "EPROM_get_mbyte: addr=%04X\n", addr);
         if (addr < EPROM_unit.capac) {
             SET_XACK(1);                /* good memory address */
