@@ -1,6 +1,6 @@
 /* pdp11_cpu.c: PDP-11 CPU simulator
 
-   Copyright (c) 1993-2013, Robert M Supnik
+   Copyright (c) 1993-2016, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,9 @@
 
    cpu          PDP-11 CPU
 
+   06-Mar-16    RMS     Fixed bug in history virtual addressing
+   30-Dec-15    RMS     Added NOBEVENT option for 11/03, 11/23
+   29-Dec-15    RMS     Call build_dib_tab during reset (Mark Pizzolato)
    05-Dec-13    RMS     Fixed bug in CSM (John Dundas)
    23-Oct-13    RMS     Fixed PS behavior on initialization and boot
    10-Apr-13    RMS     MMR1 does not track PC changes (Johnny Billquist)
@@ -230,14 +233,15 @@
 #define PCQ_ENTRY       pcq[pcq_p = (pcq_p - 1) & PCQ_MASK] = PC
 #define calc_is(md)     ((md) << VA_V_MODE)
 #define calc_ds(md)     (calc_is((md)) | ((MMR3 & dsmask[(md)])? VA_DS: 0))
-#define calc_MMR1(val)  ((MMR1)? (((val) << 8) | MMR1): (val))
+/* Register change tracking actually goes into variable reg_mods; from there
+   it is copied into MMR1 if that register is not currently locked.  */
+#define calc_MMR1(val)  ((reg_mods)? (((val) << 8) | reg_mods): (val))
 #define GET_SIGN_W(v)   (((v) >> 15) & 1)
 #define GET_SIGN_B(v)   (((v) >> 7) & 1)
 #define GET_Z(v)        ((v) == 0)
 #define JMP_PC(x)       PCQ_ENTRY; PC = (x)
 #define BRANCH_F(x)     PCQ_ENTRY; PC = (PC + (((x) + (x)) & 0377)) & 0177777
 #define BRANCH_B(x)     PCQ_ENTRY; PC = (PC + (((x) + (x)) | 0177400)) & 0177777
-#define last_pa         (cpu_unit.u4)                   /* auto save/rest */
 #define UNIT_V_MSIZE    (UNIT_V_UF + 0)                 /* dummy */
 #define UNIT_MSIZE      (1u << UNIT_V_MSIZE)
 
@@ -303,6 +307,12 @@ int32 hst_lnt = 0;                                      /* history length */
 InstHistory *hst = NULL;                                /* instruction history */
 int32 dsmask[4] = { MMR3_KDS, MMR3_SDS, 0, MMR3_UDS };  /* dspace enables */
 t_addr cpu_memsize = INIMEMSIZE;                        /* last mem addr */
+int16 inst_pc;                                          /* PC of current instr */
+int32 inst_psw;                                         /* PSW at instr. start */
+int16 reg_mods;                                         /* reg deltas */
+int32 last_pa;                                          /* pa from ReadMW/ReadMB */
+int32 saved_sim_interval;                               /* saved at inst start */
+t_stat reason;                                          /* stop reason */
 
 extern int32 CPUERR, MAINT;
 extern CPUTAB cpu_tab[];
@@ -313,9 +323,9 @@ t_stat cpu_ex (t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_dep (t_value val, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_reset (DEVICE *dptr);
 t_bool cpu_is_pc_a_subroutine_call (t_addr **ret_addrs);
-t_stat cpu_set_hist (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat cpu_show_virt (FILE *st, UNIT *uptr, int32 val, void *desc);
+t_stat cpu_set_hist (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat cpu_show_virt (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 int32 GeteaB (int32 spec);
 int32 GeteaW (int32 spec);
 int32 relocR (int32 addr);
@@ -327,10 +337,14 @@ void reloc_abort (int32 err, int32 apridx);
 int32 ReadE (int32 addr);
 int32 ReadW (int32 addr);
 int32 ReadB (int32 addr);
+int32 ReadCW (int32 addr);
 int32 ReadMW (int32 addr);
 int32 ReadMB (int32 addr);
+int32 PReadW (int32 addr);
+int32 PReadB (int32 addr);
 void WriteW (int32 data, int32 addr);
 void WriteB (int32 data, int32 addr);
+void WriteCW (int32 data, int32 addr);
 void PWriteW (int32 data, int32 addr);
 void PWriteB (int32 data, int32 addr);
 void set_r_display (int32 rs, int32 cm);
@@ -344,9 +358,9 @@ extern void fp11 (int32 IR);
 extern t_stat cis11 (int32 IR);
 extern t_stat fis11 (int32 IR);
 extern t_stat build_dib_tab (void);
-extern t_stat show_iospace (FILE *st, UNIT *uptr, int32 val, void *desc);
-extern t_stat set_autocon (UNIT *uptr, int32 val, char *cptr, void *desc);
-extern t_stat show_autocon (FILE *st, UNIT *uptr, int32 val, void *desc);
+extern t_stat show_iospace (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+extern t_stat set_autocon (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+extern t_stat show_autocon (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern t_stat iopageR (int32 *data, uint32 addr, int32 access);
 extern t_stat iopageW (int32 data, uint32 addr, int32 access);
 extern int32 calc_ints (int32 nipl, int32 trq);
@@ -383,62 +397,80 @@ int32 trap_clear[TRAP_V_MAX] = {                        /* trap clears */
 
 UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK, INIMEMSIZE) };
 
+const char *psw_modes[] = {"K", "E", "S", "U"};
+
+
+BITFIELD psw_bits[] = {
+    BIT(C),                                 /* Carry */
+    BIT(V),                                 /* Overflow */
+    BIT(Z),                                 /* Zero */
+    BIT(N),                                 /* Negative */
+    BIT(TBIT),                              /* trace trap */
+    BITFFMT(IPL,3,%d),                      /* IPL */
+    BIT(FPD),                               /* First Part Done */
+    BITNCF(2),                              /* MBZ */
+    BIT(RS),                                /* Register Set */
+    BITFNAM(PM,2,psw_modes),                /* Previous Access Mode */
+    BITFNAM(CM,2,psw_modes),                /* Current Access Mode */
+    ENDBITS
+};
+
 REG cpu_reg[] = {
-    { ORDATA (PC, saved_PC, 16) },
-    { ORDATA (R0, REGFILE[0][0], 16) },
-    { ORDATA (R1, REGFILE[1][0], 16) },
-    { ORDATA (R2, REGFILE[2][0], 16) },
-    { ORDATA (R3, REGFILE[3][0], 16) },
-    { ORDATA (R4, REGFILE[4][0], 16) },
-    { ORDATA (R5, REGFILE[5][0], 16) },
-    { ORDATA (SP, STACKFILE[MD_KER], 16) },
-    { ORDATA (R00, REGFILE[0][0], 16) },
-    { ORDATA (R01, REGFILE[1][0], 16) },
-    { ORDATA (R02, REGFILE[2][0], 16) },
-    { ORDATA (R03, REGFILE[3][0], 16) },
-    { ORDATA (R04, REGFILE[4][0], 16) },
-    { ORDATA (R05, REGFILE[5][0], 16) },
-    { ORDATA (R10, REGFILE[0][1], 16) },
-    { ORDATA (R11, REGFILE[1][1], 16) },
-    { ORDATA (R12, REGFILE[2][1], 16) },
-    { ORDATA (R13, REGFILE[3][1], 16) },
-    { ORDATA (R14, REGFILE[4][1], 16) },
-    { ORDATA (R15, REGFILE[5][1], 16) },
-    { ORDATA (KSP, STACKFILE[MD_KER], 16) },
-    { ORDATA (SSP, STACKFILE[MD_SUP], 16) },
-    { ORDATA (USP, STACKFILE[MD_USR], 16) },
-    { ORDATA (PSW, PSW, 16) },
-    { GRDATA (CM, PSW, 8, 2, PSW_V_CM) },
-    { GRDATA (PM, PSW, 8, 2, PSW_V_PM) },
-    { FLDATA (RS, PSW, PSW_V_RS) },
-    { FLDATA (FPD, PSW, PSW_V_FPD) },
-    { GRDATA (IPL, PSW, 8, 3, PSW_V_IPL) },
-    { FLDATA (T, PSW, PSW_V_TBIT) },
-    { FLDATA (N, PSW, PSW_V_N) },
-    { FLDATA (Z, PSW, PSW_V_Z) },
-    { FLDATA (V, PSW, PSW_V_V) },
-    { FLDATA (C, PSW, PSW_V_C) },
-    { ORDATA (PIRQ, PIRQ, 16) },
-    { ORDATA (STKLIM, STKLIM, 16) },
-    { ORDATA (FAC0H, FR[0].h, 32) },
-    { ORDATA (FAC0L, FR[0].l, 32) },
-    { ORDATA (FAC1H, FR[1].h, 32) },
-    { ORDATA (FAC1L, FR[1].l, 32) },
-    { ORDATA (FAC2H, FR[2].h, 32) },
-    { ORDATA (FAC2L, FR[2].l, 32) },
-    { ORDATA (FAC3H, FR[3].h, 32) },
-    { ORDATA (FAC3L, FR[3].l, 32) },
-    { ORDATA (FAC4H, FR[4].h, 32) },
-    { ORDATA (FAC4L, FR[4].l, 32) },
-    { ORDATA (FAC5H, FR[5].h, 32) },
-    { ORDATA (FAC5L, FR[5].l, 32) },
-    { ORDATA (FPS, FPS, 16) },
-    { ORDATA (FEA, FEA, 16) },
-    { ORDATA (FEC, FEC, 4) },
-    { ORDATA (MMR0, MMR0, 16) },
-    { ORDATA (MMR1, MMR1, 16) },
-    { ORDATA (MMR2, MMR2, 16) },
-    { ORDATA (MMR3, MMR3, 16) },
+    { ORDATAD (PC, saved_PC, 16,            "Program Counter") },
+    { ORDATAD (R0, REGFILE[0][0], 16,       "General Purpose R0") },
+    { ORDATAD (R1, REGFILE[1][0], 16,       "General Purpose R1") },
+    { ORDATAD (R2, REGFILE[2][0], 16,       "General Purpose R2") },
+    { ORDATAD (R3, REGFILE[3][0], 16,       "General Purpose R3") },
+    { ORDATAD (R4, REGFILE[4][0], 16,       "General Purpose R4") },
+    { ORDATAD (R5, REGFILE[5][0], 16,       "General Purpose R5") },
+    { ORDATAD (SP, STACKFILE[MD_KER], 16,   "Stack Pointer"), },
+    { ORDATAD (R00, REGFILE[0][0], 16,      "Register File R00") },
+    { ORDATAD (R01, REGFILE[1][0], 16,      "Register File R01") },
+    { ORDATAD (R02, REGFILE[2][0], 16,      "Register File R02") },
+    { ORDATAD (R03, REGFILE[3][0], 16,      "Register File R03") },
+    { ORDATAD (R04, REGFILE[4][0], 16,      "Register File R04") },
+    { ORDATAD (R05, REGFILE[5][0], 16,      "Register File R05") },
+    { ORDATAD (R10, REGFILE[0][1], 16,      "Register File R10") },
+    { ORDATAD (R11, REGFILE[1][1], 16,      "Register File R11") },
+    { ORDATAD (R12, REGFILE[2][1], 16,      "Register File R12") },
+    { ORDATAD (R13, REGFILE[3][1], 16,      "Register File R13") },
+    { ORDATAD (R14, REGFILE[4][1], 16,      "Register File R14") },
+    { ORDATAD (R15, REGFILE[5][1], 16,      "Register File R15") },
+    { ORDATAD (KSP, STACKFILE[MD_KER], 16,  "Kernel Stack Pointer" ) },
+    { ORDATAD (SSP, STACKFILE[MD_SUP], 16,  "Supervisor Stack Pointer" ) },
+    { ORDATAD (USP, STACKFILE[MD_USR], 16,  "User Stack Pointer" ) },
+    { ORDATADF(PSW, PSW, 16,                "Processor Status Word", psw_bits) },
+    { GRDATAD (CM, PSW, 8, 2, PSW_V_CM,     "Current Mode") },
+    { GRDATAD (PM, PSW, 8, 2, PSW_V_PM,     "Previous Mode") },
+    { FLDATAD (RS, PSW, PSW_V_RS,           "Register Set") },
+    { FLDATAD (FPD, PSW, PSW_V_FPD,         "First Part Done") },
+    { GRDATAD (IPL, PSW, 8, 3, PSW_V_IPL,   "Interrupt Priority Level") },
+    { FLDATAD (T, PSW, PSW_V_TBIT,          "Trace Trap") },
+    { FLDATAD (N, PSW, PSW_V_N,             "Condition Code: Negative") },
+    { FLDATAD (Z, PSW, PSW_V_Z,             "Condition Code: Zero") },
+    { FLDATAD (V, PSW, PSW_V_V,             "Condition Code: Overflow") },
+    { FLDATAD (C, PSW, PSW_V_C,             "Condition Code: Carry") },
+    { ORDATAD (PIRQ, PIRQ, 16,              "Programmed Interrupt Request") },
+    { ORDATAD (STKLIM, STKLIM, 16,          "Stack Limit") },
+    { ORDATAD (FAC0H, FR[0].h, 32,          "Floating Point: R0 High") },
+    { ORDATAD (FAC0L, FR[0].l, 32,          "Floating Point: R0 Low") },
+    { ORDATAD (FAC1H, FR[1].h, 32,          "Floating Point: R1 High") },
+    { ORDATAD (FAC1L, FR[1].l, 32,          "Floating Point: R1 Low") },
+    { ORDATAD (FAC2H, FR[2].h, 32,          "Floating Point: R2 High") },
+    { ORDATAD (FAC2L, FR[2].l, 32,          "Floating Point: R2 Low") },
+    { ORDATAD (FAC3H, FR[3].h, 32,          "Floating Point: R3 High") },
+    { ORDATAD (FAC3L, FR[3].l, 32,          "Floating Point: R3 Low") },
+    { ORDATAD (FAC4H, FR[4].h, 32,          "Floating Point: R4 High") },
+    { ORDATAD (FAC4L, FR[4].l, 32,          "Floating Point: R4 Low") },
+    { ORDATAD (FAC5H, FR[5].h, 32,          "Floating Point: R5 High") },
+    { ORDATAD (FAC5L, FR[5].l, 32,          "Floating Point: R5 Low") },
+    { ORDATAD (FPS, FPS, 16,                "FP Status") },
+    { ORDATAD (FEA, FEA, 16,                "FP Exception Code") },
+    { ORDATAD (FEC, FEC, 4,                 "FP Exception Address") },
+    { ORDATAD (MMR0, MMR0, 16,              "MMR0 - Status") },
+    { ORDATAD (MMR1, MMR1, 16,              "MMR1 - R+/-R") },
+    { ORDATAD (MMR2, MMR2, 16,              "MMR2 - saved PC") },
+    { ORDATAD (MMR3, MMR3, 16,              "MMR3 - 22b status") },
     { GRDATA (KIPAR0, APRFILE[000], 8, 16, 16) },
     { GRDATA (KIPDR0, APRFILE[000], 8, 16, 0) },
     { GRDATA (KIPAR1, APRFILE[001], 8, 16, 16) },
@@ -535,13 +567,13 @@ REG cpu_reg[] = {
     { GRDATA (UDPDR6, APRFILE[076], 8, 16, 0) },
     { GRDATA (UDPAR7, APRFILE[077], 8, 16, 16) },
     { GRDATA (UDPDR7, APRFILE[077], 8, 16, 0) },
-    { BRDATA (IREQ, int_req, 8, 32, IPL_HLVL), REG_RO },
-    { ORDATA (TRAPS, trap_req, TRAP_V_MAX) },
-    { FLDATA (WAIT, wait_state, 0) },
+    { BRDATAD (IREQ, int_req, 8, 32, IPL_HLVL, "Interrupt Requests"), REG_RO },
+    { ORDATAD (TRAPS, trap_req, TRAP_V_MAX, "Trap Requests") },
+    { FLDATAD (WAIT, wait_state, 0,         "Wait State") },
     { FLDATA (WAIT_ENABLE, wait_enable, 0), REG_HIDDEN },
-    { ORDATA (STOP_TRAPS, stop_trap, TRAP_V_MAX) },
-    { FLDATA (STOP_VECA, stop_vecabort, 0) },
-    { FLDATA (STOP_SPA, stop_spabort, 0) },
+    { ORDATAD (STOP_TRAPS, stop_trap, TRAP_V_MAX, "Stop on Trap") },
+    { FLDATAD (STOP_VECA, stop_vecabort, 0, "Stop on Vec Abort") },
+    { FLDATAD (STOP_SPA, stop_spabort, 0,   "Stop on SP Abort") },
     { FLDATA (AUTOCON, autcon_enb, 0), REG_HRO },
     { BRDATA (PCQ, pcq, 8, 16, PCQ_SIZE), REG_RO+REG_CIRC },
     { ORDATA (PCQP, pcq_p, 6), REG_HRO },
@@ -588,6 +620,8 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV, OPT_CIS, NULL, "NOCIS", &cpu_clr_opt },
     { MTAB_XTD|MTAB_VDV, OPT_MMU, NULL, "MMU", &cpu_set_opt },
     { MTAB_XTD|MTAB_VDV, OPT_MMU, NULL, "NOMMU", &cpu_clr_opt },
+    { MTAB_XTD|MTAB_VDV, OPT_BVT, NULL, "BEVENT", &cpu_set_opt, NULL, NULL, "Enable BEVENT line (11/03, 11/23 only)" },
+    { MTAB_XTD|MTAB_VDV, OPT_BVT, NULL, "NOBEVENT", &cpu_clr_opt, NULL, NULL, "Disable BEVENT line (11/03, 11/23 only)" },
     { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE", &sim_set_idle, &sim_show_idle },
     { MTAB_XTD|MTAB_VDV, 0, NULL, "NOIDLE", &sim_clr_idle, NULL },
     { UNIT_MSIZE, 16384, NULL, "16K", &cpu_set_size},
@@ -623,13 +657,25 @@ MTAB cpu_mod[] = {
     { 0 }
     };
 
+BRKTYPTAB cpu_breakpoints [] = {
+    BRKTYPE('E',"Execute Instruction at Virtual Address"),
+    BRKTYPE('P',"Execute Instruction at Physical Address"),
+    BRKTYPE('R',"Read from Virtual Address"),
+    BRKTYPE('S',"Read from Physical Address"),
+    BRKTYPE('W',"Write to Virtual Address"),
+    BRKTYPE('X',"Write to Physical Address"),
+    { 0 }
+    };
+
 DEVICE cpu_dev = {
     "CPU", &cpu_unit, cpu_reg, cpu_mod,
     1, 8, 22, 2, 8, 16,
     &cpu_ex, &cpu_dep, &cpu_reset,
     NULL, NULL, NULL,
     NULL, DEV_DYNM, 0,
-    NULL, &cpu_set_size, NULL
+    NULL, &cpu_set_size, NULL,
+    NULL, NULL, NULL, NULL,
+    cpu_breakpoints
     };
 
 t_value pdp11_pc_value (void)
@@ -641,7 +687,7 @@ t_stat sim_instr (void)
 {
 int abortval, i;
 volatile int32 trapea;                                  /* used by setjmp */
-t_stat reason;
+InstHistory *hst_ent = NULL;
 
 sim_vm_pc_value = &pdp11_pc_value;
 
@@ -695,19 +741,50 @@ reason = 0;
 */
 
 abortval = setjmp (save_env);                           /* set abort hdlr */
-if (abortval != 0) {
-    trap_req = trap_req | abortval;                     /* or in trap flag */
-    if ((trapea > 0) && stop_vecabort)
-        reason = STOP_VECABORT;
-    if ((trapea < 0) &&                                 /* stack push abort? */
-        (CPUT (STOP_STKA) || stop_spabort))
-        reason = STOP_SPABORT;
-    if (trapea == ~MD_KER) {                            /* kernel stk abort? */
-        setTRAP (TRAP_RED);
-        setCPUERR (CPUE_RED);
-        STACKFILE[MD_KER] = 4;
-        if (cm == MD_KER)
-            SP = 4;
+if (abortval == ABRT_BKPT) {
+    /* Breakpoint encountered.  */
+    reason = STOP_IBKPT;
+    /* Print a message reporting the type and address if it is not a 
+       plain virtual PC (instruction execution) breakpoint.  */
+    if (sim_brk_match_type != BPT_PCVIR)
+        sim_messagef (reason, "\r\n%s", sim_brk_message());
+    /* Restore the PC and sim_interval. */
+    PC = inst_pc;
+    sim_interval = saved_sim_interval;
+    /* Restore PSW and the broken-out condition code values, provided
+       FPD is not currently set.  If it is, that means the instruction
+       is interruptible and breakpoints are treated as continuation
+       rather than replay.  */
+    if (!fpd) {
+        PSW = inst_psw;
+        put_PSW (inst_psw, 0);
+        }
+    /* Undo register changes. */
+    while (reg_mods) {
+        int rnum = reg_mods & 7;
+        int delta = (reg_mods >> 3) & 037;
+        reg_mods >>= 8;
+        if (delta & 020)                                /* negative delta */
+            delta = -(-delta & 037);                    /* get signed value */
+        if (rnum != 7)
+            R[rnum] -= delta;
+        }
+    }
+else {
+    if (abortval != 0) {
+        trap_req = trap_req | abortval;                 /* or in trap flag */
+        if ((trapea > 0) && stop_vecabort)
+            reason = STOP_VECABORT;
+        if ((trapea < 0) &&                             /* stack push abort? */
+            (CPUT (STOP_STKA) || stop_spabort))
+            reason = STOP_SPABORT;
+        if (trapea == ~MD_KER) {                        /* kernel stk abort? */
+            setTRAP (TRAP_RED);
+            setCPUERR (CPUE_RED);
+            STACKFILE[MD_KER] = 4;
+            if (cm == MD_KER)
+                SP = 4;
+            }
         }
     }
 
@@ -789,6 +866,11 @@ while (reason == 0)  {
    5. Push the old PC and PSW on the new stack
    6. Update SP, PSW, and PC
    7. If not stack overflow, check for stack overflow
+
+   If the reads in step 3, or the writes in step 5, match a data breakpoint,
+   the breakpoint status will be set but the interrupt actions will continue.
+   The breakpoint stop will occur at the beginning of the next instruction 
+   cycle.
 */
 
         wait_state = 0;                                 /* exit wait state */
@@ -800,12 +882,12 @@ while (reason == 0)  {
                 MMR2 = trapea;
             MMR0 = MMR0 & ~MMR0_IC;                     /* clear IC */
             }
-        src = ReadW (trapea | calc_ds (MD_KER));        /* new PC */
-        src2 = ReadW ((trapea + 2) | calc_ds (MD_KER)); /* new PSW */
+        src = ReadCW (trapea | calc_ds (MD_KER));       /* new PC */
+        src2 = ReadCW ((trapea + 2) | calc_ds (MD_KER)); /* new PSW */
         t = (src2 >> PSW_V_CM) & 03;                    /* new cm */
         trapea = ~t;                                    /* flag pushes */
-        WriteW (PSW, ((STACKFILE[t] - 2) & 0177777) | calc_ds (t));
-        WriteW (PC, ((STACKFILE[t] - 4) & 0177777) | calc_ds (t));
+        WriteCW (PSW, ((STACKFILE[t] - 2) & 0177777) | calc_ds (t));
+        WriteCW (PC, ((STACKFILE[t] - 4) & 0177777) | calc_ds (t));
         trapea = 0;                                     /* clear trap flag */
         src2 = (src2 & ~PSW_PM) | (cm << PSW_V_PM);     /* insert prv mode */
         put_PSW (src2, 0);                              /* call calc_is,ds */
@@ -836,9 +918,20 @@ while (reason == 0)  {
         continue;
         }
 
-    if (sim_brk_summ && sim_brk_test (PC, SWMASK ('E'))) { /* breakpoint? */
-        reason = STOP_IBKPT;                            /* stop simulation */
-        continue;
+    reg_mods = 0;
+    inst_pc = PC;
+    /* Save PSW also because condition codes need to be preserved.
+       We just save the whole PSW because that is sufficient (that
+       representation is up to date at this point).  If restoring is
+       needed, both the PSW and the components that need to be restored
+       are handled explicitly.  */
+    inst_psw = PSW;
+    saved_sim_interval = sim_interval;
+    if (BPT_SUMM_PC) {                                  /* possible breakpoint */
+        t_addr pa = relocR (PC | isenable);             /* relocate PC */
+        if (sim_brk_test (PC, BPT_PCVIR) ||             /* Normal PC breakpoint? */
+            sim_brk_test (pa, BPT_PCPHY))               /* Physical Address breakpoint? */
+            ABORT (ABRT_BKPT);                          /* stop simulation */
         }
 
     if (update_MM) {                                    /* if mm not frozen */
@@ -854,15 +947,20 @@ while (reason == 0)  {
     if (hst_lnt) {                                      /* record history? */
         t_value val;
         uint32 i;
-        hst[hst_p].pc = PC | HIST_VLD;
-        hst[hst_p].psw = get_PSW ();
-        hst[hst_p].src = R[srcspec & 07];
-        hst[hst_p].dst = R[dstspec & 07];
-        hst[hst_p].inst[0] = IR;
+        static int32 swmap[4] = {
+            SWMASK ('K') | SWMASK ('V'), SWMASK ('S') | SWMASK ('V'),
+            SWMASK ('U') | SWMASK ('V'), SWMASK ('U') | SWMASK ('V')
+            };
+        hst_ent = &hst[hst_p];
+        hst_ent->pc = PC | HIST_VLD;
+        hst_ent->psw = get_PSW ();
+        hst_ent->src = 0;
+        hst_ent->dst = 0;
+        hst_ent->inst[0] = IR;
         for (i = 1; i < HIST_ILNT; i++) {
-            if (cpu_ex (&val, (PC + (i << 1)) & 0177777, &cpu_unit, SWMASK ('V')))
-                hst[hst_p].inst[i] = 0;
-            else hst[hst_p].inst[i] = (uint16) val;
+            if (cpu_ex (&val, (PC + (i << 1)) & 0177777, &cpu_unit, swmap[cm & 03]))
+                hst_ent->inst[i] = 0;
+            else hst_ent->inst[i] = (uint16) val;
             }
         hst_p = (hst_p + 1);
         if (hst_p >= hst_lnt)
@@ -956,6 +1054,8 @@ while (reason == 0)  {
                 if (CPUT (CPUT_05|CPUT_20) &&           /* 11/05, 11/20 */
                     ((dstspec & 070) == 020))           /* JMP (R)+? */
                     dst = R[dstspec & 07];              /* use post incr */
+                if (hst_ent)
+                    hst_ent->dst = dst;
                 JMP_PC (dst);
                 }
             break;                                      /* end JMP */
@@ -963,6 +1063,8 @@ while (reason == 0)  {
         case 002:                                       /* RTS et al*/
             if (IR < 000210) {                          /* RTS */
                 dstspec = dstspec & 07;
+                if (hst_ent)
+                    hst_ent->dst = R[dstspec];
                 JMP_PC (R[dstspec]);
                 R[dstspec] = ReadW (SP | dsenable);
                 if (dstspec != 6)
@@ -1011,6 +1113,8 @@ while (reason == 0)  {
             if (!CPUT (CPUT_20))
                 V = 0;
             C = 0;
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1105,12 +1209,15 @@ while (reason == 0)  {
                     ((dstspec & 070) == 020))           /* JSR (R)+? */
                     dst = R[dstspec & 07];              /* use post incr */
                 SP = (SP - 2) & 0177777;
+                reg_mods = calc_MMR1 (0366);
                 if (update_MM)
-                    MMR1 = calc_MMR1 (0366);
+                    MMR1 = reg_mods;
                 WriteW (R[srcspec], SP | dsenable);
                 if ((cm == MD_KER) && (SP < (STKLIM + STKL_Y)))
                     set_stack_trap (SP);
                 R[srcspec] = PC;
+                if (hst_ent)
+                    hst_ent->dst = dst;
                 JMP_PC (dst & 0177777);
                 }
             break;                                      /* end JSR */
@@ -1118,6 +1225,8 @@ while (reason == 0)  {
         case 050:                                       /* CLR */
             N = V = C = 0;
             Z = 1;
+            if (hst_ent)
+                hst_ent->dst = 0;
             if (dstreg)
                 R[dstspec] = 0;
             else WriteW (0, GeteaW (dstspec));
@@ -1130,6 +1239,8 @@ while (reason == 0)  {
             Z = GET_Z (dst);
             V = 0;
             C = 1;
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1141,6 +1252,8 @@ while (reason == 0)  {
             N = GET_SIGN_W (dst);
             Z = GET_Z (dst);
             V = (dst == 0100000);
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1152,6 +1265,8 @@ while (reason == 0)  {
             N = GET_SIGN_W (dst);
             Z = GET_Z (dst);
             V = (dst == 077777);
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1164,6 +1279,8 @@ while (reason == 0)  {
             Z = GET_Z (dst);
             V = (dst == 0100000);
             C = Z ^ 1;
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1176,6 +1293,8 @@ while (reason == 0)  {
             Z = GET_Z (dst);
             V = (C && (dst == 0100000));
             C = C & Z;
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1188,6 +1307,8 @@ while (reason == 0)  {
             Z = GET_Z (dst);
             V = (C && (dst == 077777));
             C = (C && (dst == 0177777));
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1195,6 +1316,8 @@ while (reason == 0)  {
 
         case 057:                                       /* TST */
             dst = dstreg? R[dstspec]: ReadW (GeteaW (dstspec));
+            if (hst_ent)
+                hst_ent->dst = dst;
             N = GET_SIGN_W (dst);
             Z = GET_Z (dst);
             V = C = 0;
@@ -1207,6 +1330,8 @@ while (reason == 0)  {
             Z = GET_Z (dst);
             C = (src & 1);
             V = N ^ C;
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1219,6 +1344,8 @@ while (reason == 0)  {
             Z = GET_Z (dst);
             C = GET_SIGN_W (src);
             V = N ^ C;
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1231,6 +1358,8 @@ while (reason == 0)  {
             Z = GET_Z (dst);
             C = (src & 1);
             V = N ^ C;
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1243,6 +1372,8 @@ while (reason == 0)  {
             Z = GET_Z (dst);
             C = GET_SIGN_W (src);
             V = N ^ C;
+            if (hst_ent)
+                hst_ent->dst = dst;
             if (dstreg)
                 R[dstspec] = dst;
             else PWriteW (dst, last_pa);
@@ -1278,8 +1409,11 @@ while (reason == 0)  {
                 Z = GET_Z (dst);
                 V = 0;
                 SP = (SP - 2) & 0177777;
+                reg_mods = calc_MMR1 (0366);
                 if (update_MM)
-                    MMR1 = calc_MMR1 (0366);
+                    MMR1 = reg_mods;
+                if (hst_ent)
+                    hst_ent->dst = dst;
                 WriteW (dst, SP | dsenable);
                 if ((cm == MD_KER) && (SP < (STKLIM + STKL_Y)))
                     set_stack_trap (SP);
@@ -1294,7 +1428,10 @@ while (reason == 0)  {
                 Z = GET_Z (dst);
                 V = 0;
                 SP = (SP + 2) & 0177777;
-                if (update_MM) MMR1 = 026;
+                reg_mods = 026;
+                if (update_MM) MMR1 = reg_mods;
+                if (hst_ent)
+                    hst_ent->dst = dst;
                 if (dstreg) {
                     if ((dstspec == 6) && (cm != pm))
                         STACKFILE[pm] = dst;
@@ -1310,6 +1447,8 @@ while (reason == 0)  {
                 dst = N? 0177777: 0;
                 Z = N ^ 1;
                 V = 0;
+                if (hst_ent)
+                    hst_ent->dst = dst;
                 if (dstreg)
                     R[dstspec] = dst;
                 else WriteW (dst, GeteaW (dstspec));
@@ -1344,6 +1483,8 @@ while (reason == 0)  {
                 V = 0;
                 C = (dst & 1);
                 R[0] = dst;                             /* R[0] <- dst */
+                if (hst_ent)
+                    hst_ent->dst = dst | 1;
                 PWriteW (R[0] | 1, last_pa);            /* dst <- R[0] | 1 */
                 }
             else setTRAP (TRAP_ILL);
@@ -1355,6 +1496,8 @@ while (reason == 0)  {
                 Z = GET_Z (R[0]);
                 V = 0;
                 WriteW (R[0], GeteaW (dstspec));
+                if (hst_ent)
+                    hst_ent->dst = R[0];
                 }
             else setTRAP (TRAP_ILL);
             break;
@@ -1389,6 +1532,10 @@ while (reason == 0)  {
         N = GET_SIGN_W (dst);
         Z = GET_Z (dst);
         V = 0;
+        if (hst_ent) {
+            hst_ent->src = dst;
+            hst_ent->dst = dst;
+            }
         if (dstreg)
             R[dstspec] = dst;
         else WriteW (dst, ea);
@@ -1404,6 +1551,10 @@ while (reason == 0)  {
             src2 = dstreg? R[dstspec]: ReadW (GeteaW (dstspec));
             }
         dst = (src - src2) & 0177777;
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = src2;
+            }
         N = GET_SIGN_W (dst);
         Z = GET_Z (dst);
         V = GET_SIGN_W ((src ^ src2) & (~src2 ^ dst));
@@ -1420,6 +1571,10 @@ while (reason == 0)  {
             src2 = dstreg? R[dstspec]: ReadW (GeteaW (dstspec));
             }
         dst = src2 & src;
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = dst;
+            }
         N = GET_SIGN_W (dst);
         Z = GET_Z (dst);
         V = 0;
@@ -1435,6 +1590,10 @@ while (reason == 0)  {
             src2 = dstreg? R[dstspec]: ReadMW (GeteaW (dstspec));
             }
         dst = src2 & ~src;
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = dst;
+            }
         N = GET_SIGN_W (dst);
         Z = GET_Z (dst);
         V = 0;
@@ -1453,6 +1612,10 @@ while (reason == 0)  {
             src2 = dstreg? R[dstspec]: ReadMW (GeteaW (dstspec));
             }
         dst = src2 | src;
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = dst;
+            }
         N = GET_SIGN_W (dst);
         Z = GET_Z (dst);
         V = 0;
@@ -1471,6 +1634,10 @@ while (reason == 0)  {
             src2 = dstreg? R[dstspec]: ReadMW (GeteaW (dstspec));
             }
         dst = (src2 + src) & 0177777;
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = dst;
+            }
         N = GET_SIGN_W (dst);
         Z = GET_Z (dst);
         V = GET_SIGN_W ((~src ^ src2) & (src ^ dst));
@@ -1513,6 +1680,10 @@ while (reason == 0)  {
             if (GET_SIGN_W (src))
                 src = src | ~077777;
             dst = src * src2;
+            if (hst_ent) {
+                hst_ent->src = src;
+                hst_ent->dst = dst;
+                }
             R[srcspec] = (dst >> 16) & 0177777;
             R[srcspec | 1] = dst & 0177777;
             N = (dst < 0);
@@ -1543,6 +1714,10 @@ while (reason == 0)  {
             if (GET_SIGN_W (R[srcspec]))
                 src = src | ~017777777777;
             dst = src / src2;
+            if (hst_ent) {
+                hst_ent->src = src;
+                hst_ent->dst = dst;
+                }
             N = (dst < 0);                              /* N set on 32b result */
             if ((dst > 077777) || (dst < -0100000)) {
                 V = 1;                                  /* J11,11/70 compat */
@@ -1589,6 +1764,10 @@ while (reason == 0)  {
                 V = 0;
                 C = ((src >> (63 - src2)) & 1);
                 }
+            if (hst_ent) {
+                hst_ent->src = src;
+                hst_ent->dst = dst;
+                }
             dst = R[srcspec] = dst & 0177777;
             N = GET_SIGN_W (dst);
             Z = GET_Z (dst);
@@ -1624,6 +1803,10 @@ while (reason == 0)  {
                 C = ((src >> (63 - src2)) & 1);
                 }
             i = R[srcspec] = (dst >> 16) & 0177777;
+            if (hst_ent) {
+                hst_ent->src = src;
+                hst_ent->dst = dst;
+                }
             dst = R[srcspec | 1] = dst & 0177777;
             N = GET_SIGN_W (i);
             Z = GET_Z (dst | i);
@@ -1640,6 +1823,10 @@ while (reason == 0)  {
                     src2 = dstreg? R[dstspec]: ReadMW (GeteaW (dstspec));
                     }
                 dst = src ^ src2;
+                if (hst_ent) {
+                    hst_ent->src = src;
+                    hst_ent->dst = dst;
+                    }
                 N = GET_SIGN_W (dst);
                 Z = GET_Z (dst);
                 V = 0;
@@ -1670,6 +1857,8 @@ while (reason == 0)  {
         case 7:                                         /* SOB */
             if (CPUT (HAS_SXS)) {
                 R[srcspec] = (R[srcspec] - 1) & 0177777;
+                if (hst_ent)
+                    hst_ent->dst = R[srcspec];
                 if (R[srcspec]) {
                     JMP_PC ((PC - dstspec - dstspec) & 0177777);
                     }
@@ -1794,6 +1983,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = R[dstspec] & 0177400;
             else WriteB (0, GeteaB (dstspec));
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = 0;
+            }
             break;
 
         case 051:                                       /* COMB */
@@ -1806,6 +2000,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
         case 052:                                       /* INCB */
@@ -1817,6 +2016,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
         case 053:                                       /* DECB */
@@ -1828,6 +2032,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
         case 054:                                       /* NEGB */
@@ -1840,6 +2049,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
         case 055:                                       /* ADCB */
@@ -1852,6 +2066,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
         case 056:                                       /* SBCB */
@@ -1864,10 +2083,17 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
         case 057:                                       /* TSTB */
             dst = dstreg? R[dstspec] & 0377: ReadB (GeteaB (dstspec));
+            if (hst_ent)
+                hst_ent->dst = dst;
             N = GET_SIGN_B (dst);
             Z = GET_Z (dst);
             V = C = 0;
@@ -1883,6 +2109,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
         case 061:                                       /* ROLB */
@@ -1895,6 +2126,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
         case 062:                                       /* ASRB */
@@ -1907,6 +2143,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
         case 063:                                       /* ASLB */
@@ -1919,6 +2160,11 @@ while (reason == 0)  {
             if (dstreg)
                 R[dstspec] = (R[dstspec] & 0177400) | dst;
             else PWriteB (dst, last_pa);
+            if (hst_ent) {
+                if (dstreg)
+                    hst_ent->dst = R[dstspec];
+                else hst_ent->dst = dst;
+            }
             break;
 
 /* Notes:
@@ -1954,8 +2200,11 @@ while (reason == 0)  {
                 Z = GET_Z (dst);
                 V = 0;
                 SP = (SP - 2) & 0177777;
+                reg_mods = calc_MMR1 (0366);
                 if (update_MM)
-                    MMR1 = calc_MMR1 (0366);
+                    MMR1 = reg_mods;
+                if (hst_ent)
+                    hst_ent->dst = dst;
                 WriteW (dst, SP | dsenable);
                 if ((cm == MD_KER) && (SP < (STKLIM + STKL_Y)))
                     set_stack_trap (SP);
@@ -1970,8 +2219,11 @@ while (reason == 0)  {
                 Z = GET_Z (dst);
                 V = 0;
                 SP = (SP + 2) & 0177777;
+                reg_mods = 026;
                 if (update_MM)
-                    MMR1 = 026;
+                    MMR1 = reg_mods;
+                if (hst_ent)
+                    hst_ent->dst = dst;
                 if (dstreg) {
                     if ((dstspec == 6) && (cm != pm))
                         STACKFILE[pm] = dst;
@@ -2023,6 +2275,10 @@ while (reason == 0)  {
         if (dstreg)
             R[dstspec] = (dst & 0200)? 0177400 | dst: dst;
         else WriteB (dst, ea);
+        if (hst_ent) {
+            hst_ent->src = srcreg? R[srcspec]: dst;
+            hst_ent->dst = dstreg? R[dstspec]: dst;
+            }
         break;
 
     case 012:                                           /* CMPB */
@@ -2033,6 +2289,10 @@ while (reason == 0)  {
         else {
             src = srcreg? R[srcspec] & 0377: ReadB (GeteaB (srcspec));
             src2 = dstreg? R[dstspec] & 0377: ReadB (GeteaB (dstspec));
+            }
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = src2;
             }
         dst = (src - src2) & 0377;
         N = GET_SIGN_B (dst);
@@ -2051,6 +2311,10 @@ while (reason == 0)  {
             src2 = dstreg? R[dstspec] & 0377: ReadB (GeteaB (dstspec));
             }
         dst = (src2 & src) & 0377;
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = dst;
+            }
         N = GET_SIGN_B (dst);
         Z = GET_Z (dst);
         V = 0;
@@ -2066,6 +2330,10 @@ while (reason == 0)  {
             src2 = dstreg? R[dstspec]: ReadMB (GeteaB (dstspec));
             }
         dst = (src2 & ~src) & 0377;
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = dst;
+            }
         N = GET_SIGN_B (dst);
         Z = GET_Z (dst);
         V = 0;
@@ -2084,6 +2352,10 @@ while (reason == 0)  {
             src2 = dstreg? R[dstspec]: ReadMB (GeteaB (dstspec));
             }
         dst = (src2 | src) & 0377;
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = dst;
+            }
         N = GET_SIGN_B (dst);
         Z = GET_Z (dst);
         V = 0;
@@ -2102,6 +2374,10 @@ while (reason == 0)  {
             src2 = dstreg? R[dstspec]: ReadMW (GeteaW (dstspec));
             }
         dst = (src2 - src) & 0177777;
+        if (hst_ent) {
+            hst_ent->src = src;
+            hst_ent->dst = dst;
+            }
         N = GET_SIGN_W (dst);
         Z = GET_Z (dst);
         V = GET_SIGN_W ((src ^ src2) & (~src ^ dst));
@@ -2195,29 +2471,33 @@ switch (spec >> 3) {                                    /* decode spec<5:3> */
 
     case 2:                                             /* (R)+ */
         R[reg] = ((adr = R[reg]) + 2) & 0177777;
+        reg_mods = calc_MMR1 (020 | reg);
         if (update_MM && (reg != 7))
-            MMR1 = calc_MMR1 (020 | reg);
+            MMR1 = reg_mods;
         return (adr | ds);
 
     case 3:                                             /* @(R)+ */
         R[reg] = ((adr = R[reg]) + 2) & 0177777;
+        reg_mods = calc_MMR1 (020 | reg);
         if (update_MM && (reg != 7))
-            MMR1 = calc_MMR1 (020 | reg);
+            MMR1 = reg_mods;
         adr = ReadW (adr | ds);
         return (adr | dsenable);
 
     case 4:                                             /* -(R) */
         adr = R[reg] = (R[reg] - 2) & 0177777;
+        reg_mods = calc_MMR1 (0360 | reg);
         if (update_MM && (reg != 7))
-            MMR1 = calc_MMR1 (0360 | reg);
+            MMR1 = reg_mods;
         if ((reg == 6) && (cm == MD_KER) && (adr < (STKLIM + STKL_Y)))
             set_stack_trap (adr);
         return (adr | ds);
 
     case 5:                                             /* @-(R) */
         adr = R[reg] = (R[reg] - 2) & 0177777;
+        reg_mods = calc_MMR1 (0360 | reg);
         if (update_MM && (reg != 7))
-            MMR1 = calc_MMR1 (0360 | reg);
+            MMR1 = reg_mods;
         if ((reg == 6) && (cm == MD_KER) && (adr < (STKLIM + STKL_Y)))
             set_stack_trap (adr);
         adr = ReadW (adr | ds);
@@ -2253,30 +2533,34 @@ switch (spec >> 3) {                                    /* decode spec<5:3> */
     case 2:                                                     /* (R)+ */
         delta = 1 + (reg >= 6);                         /* 2 if R6, PC */
         R[reg] = ((adr = R[reg]) + delta) & 0177777;
+        reg_mods = calc_MMR1 ((delta << 3) | reg);
         if (update_MM && (reg != 7))
-            MMR1 = calc_MMR1 ((delta << 3) | reg);
+            MMR1 = reg_mods;
         return (adr | ds);
 
     case 3:                                             /* @(R)+ */
         R[reg] = ((adr = R[reg]) + 2) & 0177777;
+        reg_mods = calc_MMR1 (020 | reg);
         if (update_MM && (reg != 7))
-            MMR1 = calc_MMR1 (020 | reg);
+            MMR1 = reg_mods;
         adr = ReadW (adr | ds);
         return (adr | dsenable);
 
     case 4:                                             /* -(R) */
         delta = 1 + (reg >= 6);                         /* 2 if R6, PC */
         adr = R[reg] = (R[reg] - delta) & 0177777;
+        reg_mods = calc_MMR1 ((((-delta) & 037) << 3) | reg);
         if (update_MM && (reg != 7))
-            MMR1 = calc_MMR1 ((((-delta) & 037) << 3) | reg);
+            MMR1 = reg_mods;
         if ((reg == 6) && (cm == MD_KER) && (adr < (STKLIM + STKL_Y)))
             set_stack_trap (adr);
         return (adr | ds);
 
     case 5:                                             /* @-(R) */
         adr = R[reg] = (R[reg] - 2) & 0177777;
+        reg_mods = calc_MMR1 (0360 | reg);
         if (update_MM && (reg != 7))
-            MMR1 = calc_MMR1 (0360 | reg);
+            MMR1 = reg_mods;
         if ((reg == 6) && (cm == MD_KER) && (adr < (STKLIM + STKL_Y)))
             set_stack_trap (adr);
         adr = ReadW (adr | ds);
@@ -2312,6 +2596,10 @@ if ((va & 1) && CPUT (HAS_ODD)) {                       /* odd address? */
     ABORT (TRAP_ODD);
     }
 pa = relocR (va);                                       /* relocate */
+if (BPT_SUMM_RD &&
+    (sim_brk_test (va & 0177777, BPT_RDVIR) ||
+     sim_brk_test (pa, BPT_RDPHY)))                     /* read breakpoint? */
+    ABORT (ABRT_BKPT);                                  /* stop simulation */
 if (ADDR_IS_MEM (pa))                                   /* memory address? */
     return (M[pa >> 1]);
 if ((pa < IOPAGEBASE) ||                                /* not I/O address */
@@ -2328,13 +2616,79 @@ return data;
 
 int32 ReadW (int32 va)
 {
-int32 pa, data;
+int32 pa;
 
 if ((va & 1) && CPUT (HAS_ODD)) {                       /* odd address? */
     setCPUERR (CPUE_ODD);
     ABORT (TRAP_ODD);
     }
 pa = relocR (va);                                       /* relocate */
+if (BPT_SUMM_RD &&
+    (sim_brk_test (va & 0177777, BPT_RDVIR) ||
+     sim_brk_test (pa, BPT_RDPHY)))                     /* read breakpoint? */
+    ABORT (ABRT_BKPT);                                  /* stop simulation */
+return PReadW (pa);
+}
+
+int32 ReadB (int32 va)
+{
+int32 pa;
+
+pa = relocR (va);                                       /* relocate */
+if (BPT_SUMM_RD &&
+    (sim_brk_test (va & 0177777, BPT_RDVIR) ||
+     sim_brk_test (pa, BPT_RDPHY)))                     /* read breakpoint? */
+    ABORT (ABRT_BKPT);                                  /* stop simulation */
+return PReadB (pa);
+}
+
+/* Read word with breakpoint check: if a data breakpoint is encountered,
+   set reason accordingly but don't do an ABORT.  This is used when we want
+   to break after doing the operation, used for interrupt processing.  */
+int32 ReadCW (int32 va)
+{
+int32 pa;
+
+if ((va & 1) && CPUT (HAS_ODD)) {                       /* odd address? */
+    setCPUERR (CPUE_ODD);
+    ABORT (TRAP_ODD);
+    }
+pa = relocR (va);                                       /* relocate */
+if (BPT_SUMM_RD &&
+    (sim_brk_test (va & 0177777, BPT_RDVIR) ||
+     sim_brk_test (pa, BPT_RDPHY)))                     /* read breakpoint? */
+    reason = STOP_IBKPT;                                /* report that */
+return PReadW (pa);
+}
+
+int32 ReadMW (int32 va)
+{
+if ((va & 1) && CPUT (HAS_ODD)) {                       /* odd address? */
+    setCPUERR (CPUE_ODD);
+    ABORT (TRAP_ODD);
+    }
+last_pa = relocW (va);                                  /* reloc, wrt chk */
+if (BPT_SUMM_RW &&
+    (sim_brk_test (va & 0177777, BPT_RWVIR) ||
+     sim_brk_test (last_pa, BPT_RWPHY)))                /* read or write breakpoint? */
+    ABORT (ABRT_BKPT);                                  /* stop simulation */
+return PReadW (last_pa);
+}
+
+int32 ReadMB (int32 va)
+{
+last_pa = relocW (va);                                  /* reloc, wrt chk */
+if (BPT_SUMM_RW &&
+    (sim_brk_test (va & 0177777, BPT_RWVIR) ||
+     sim_brk_test (last_pa, BPT_RWPHY)))                /* read or write breakpoint? */
+    ABORT (ABRT_BKPT);                                  /* stop simulation */
+return PReadB (last_pa);
+}
+
+int32 PReadW (int32 pa)
+{
+int32 data;
+
 if (ADDR_IS_MEM (pa))                                   /* memory address? */
     return (M[pa >> 1]);
 if (pa < IOPAGEBASE) {                                  /* not I/O address? */
@@ -2348,13 +2702,12 @@ if (iopageR (&data, pa, READ) != SCPE_OK) {             /* invalid I/O addr? */
 return data;
 }
 
-int32 ReadB (int32 va)
+int32 PReadB (int32 pa)
 {
-int32 pa, data;
+int32 data;
 
-pa = relocR (va);                                       /* relocate */
 if (ADDR_IS_MEM (pa))
-    return (va & 1? M[pa >> 1] >> 8: M[pa >> 1]) & 0377;
+    return (pa & 1? M[pa >> 1] >> 8: M[pa >> 1]) & 0377;
 if (pa < IOPAGEBASE) {                                  /* not I/O address? */
     setCPUERR (CPUE_NXM);
     ABORT (TRAP_NXM);
@@ -2363,47 +2716,7 @@ if (iopageR (&data, pa, READ) != SCPE_OK) {             /* invalid I/O addr? */
     setCPUERR (CPUE_TMO);
     ABORT (TRAP_NXM);
     }
-return ((va & 1)? data >> 8: data) & 0377;
-}
-
-int32 ReadMW (int32 va)
-{
-int32 data;
-
-if ((va & 1) && CPUT (HAS_ODD)) {                       /* odd address? */
-    setCPUERR (CPUE_ODD);
-    ABORT (TRAP_ODD);
-    }
-last_pa = relocW (va);                                  /* reloc, wrt chk */
-if (ADDR_IS_MEM (last_pa))                              /* memory address? */
-    return (M[last_pa >> 1]);
-if (last_pa < IOPAGEBASE) {                             /* not I/O address? */
-    setCPUERR (CPUE_NXM);
-    ABORT (TRAP_NXM);
-    }
-if (iopageR (&data, last_pa, READ) != SCPE_OK) {        /* invalid I/O addr? */
-    setCPUERR (CPUE_TMO);
-    ABORT (TRAP_NXM);
-    }
-return data;
-}
-
-int32 ReadMB (int32 va)
-{
-int32 data;
-
-last_pa = relocW (va);                                  /* reloc, wrt chk */
-if (ADDR_IS_MEM (last_pa))
-    return (va & 1? M[last_pa >> 1] >> 8: M[last_pa >> 1]) & 0377;
-if (last_pa < IOPAGEBASE) {                             /* not I/O address? */
-    setCPUERR (CPUE_NXM);
-    ABORT (TRAP_NXM);
-    }
-if (iopageR (&data, last_pa, READ) != SCPE_OK) {        /* invalid I/O addr? */
-    setCPUERR (CPUE_TMO);
-    ABORT (TRAP_NXM);
-    }
-return ((va & 1)? data >> 8: data) & 0377;
+return ((pa & 1)? data >> 8: data) & 0377;
 }
 
 /* Write byte and word routines
@@ -2424,19 +2737,11 @@ if ((va & 1) && CPUT (HAS_ODD)) {                       /* odd address? */
     ABORT (TRAP_ODD);
     }
 pa = relocW (va);                                       /* relocate */
-if (ADDR_IS_MEM (pa)) {                                 /* memory address? */
-    M[pa >> 1] = data;
-    return;
-    }
-if (pa < IOPAGEBASE) {                                  /* not I/O address? */
-    setCPUERR (CPUE_NXM);
-    ABORT (TRAP_NXM);
-    }
-if (iopageW (data, pa, WRITE) != SCPE_OK) {             /* invalid I/O addr? */
-    setCPUERR (CPUE_TMO);
-    ABORT (TRAP_NXM);
-    }
-return;
+if (BPT_SUMM_WR &&
+    (sim_brk_test (va & 0177777, BPT_WRVIR) ||
+     sim_brk_test (pa, BPT_WRPHY)))                     /* write breakpoint? */
+    ABORT (ABRT_BKPT);                                  /* stop simulation */
+PWriteW (data, pa);
 }
 
 void WriteB (int32 data, int32 va)
@@ -2444,21 +2749,30 @@ void WriteB (int32 data, int32 va)
 int32 pa;
 
 pa = relocW (va);                                       /* relocate */
-if (ADDR_IS_MEM (pa)) {                                 /* memory address? */
-    if (va & 1)
-        M[pa >> 1] = (M[pa >> 1] & 0377) | (data << 8);
-    else M[pa >> 1] = (M[pa >> 1] & ~0377) | data;
-    return;
-    }             
-if (pa < IOPAGEBASE) {                                  /* not I/O address? */
-    setCPUERR (CPUE_NXM);
-    ABORT (TRAP_NXM);
+if (BPT_SUMM_WR &&
+    (sim_brk_test (va & 0177777, BPT_WRVIR) ||
+     sim_brk_test (pa, BPT_WRPHY)))                     /* write breakpoint? */
+    ABORT (ABRT_BKPT);                                  /* stop simulation */
+PWriteB (data, pa);
+}
+
+/* Write word with breakpoint check: if a data breakpoint is encountered,
+   set reason accordingly but don't do an ABORT.  This is used when we want
+   to break after doing the operation, used for interrupt processing.  */
+void WriteCW (int32 data, int32 va)
+{
+int32 pa;
+
+if ((va & 1) && CPUT (HAS_ODD)) {                       /* odd address? */
+    setCPUERR (CPUE_ODD);
+    ABORT (TRAP_ODD);
     }
-if (iopageW (data, pa, WRITEB) != SCPE_OK) {            /* invalid I/O addr? */
-    setCPUERR (CPUE_TMO);
-    ABORT (TRAP_NXM);
-    }
-return;
+pa = relocW (va);                                       /* relocate */
+if (BPT_SUMM_WR &&
+    (sim_brk_test (va & 0177777, BPT_WRVIR) ||
+     sim_brk_test (pa, BPT_WRPHY)))                     /* write breakpoint? */
+    reason = STOP_IBKPT;                                /* report that */
+PWriteW (data, pa);
 }
 
 void PWriteW (int32 data, int32 pa)
@@ -2721,7 +3035,7 @@ if (MMR0 & MMR0_MME) {                                  /* if mmgt */
     else if (sw & SWMASK ('P'))
         mode = (PSW >> PSW_V_PM) & 03;
     else mode = (PSW >> PSW_V_CM) & 03;
-    va = va | ((sw & SWMASK ('D'))? calc_ds (mode): calc_is (mode));
+    va = va | ((sw & SWMASK ('T'))? calc_ds (mode): calc_is (mode));
     apridx = (va >> VA_V_APF) & 077;                    /* index into APR */
     apr = APRFILE[apridx];                              /* with va<18:13> */
     dbn = va & VA_BN;                                   /* extr block num */
@@ -3022,25 +3336,34 @@ PIRQ = 0;
 STKLIM = 0;
 if (CPUT (CPUT_T))                                      /* T11? */
     PSW = 000340;                                       /* start at IPL 7 */
-else PSW = 0;                                           /* else at IPL 0 */
+else
+    PSW = 0;                                            /* else at IPL 0 */
 MMR0 = 0;
 MMR1 = 0;
 MMR2 = 0;
 MMR3 = 0;
 trap_req = 0;
 wait_state = 0;
-if (M == NULL)
+if (M == NULL) {                    /* First time init */
     M = (uint16 *) calloc (MEMSIZE >> 1, sizeof (uint16));
-if (M == NULL)
-    return SCPE_MEM;
+    if (M == NULL)
+        return SCPE_MEM;
+    sim_set_pchar (0, "01000023640"); /* ESC, CR, LF, TAB, BS, BEL, ENQ */
+    sim_brk_dflt = SWMASK ('E');
+    sim_brk_types = sim_brk_dflt|SWMASK ('P')|
+                    SWMASK ('R')|SWMASK ('S')|
+                    SWMASK ('W')|SWMASK ('X');
+    sim_brk_type_desc = cpu_breakpoints;
+    sim_vm_is_subroutine_call = &cpu_is_pc_a_subroutine_call;
+    auto_config(NULL, 0);           /* do an initial auto configure */
+    }
 pcq_r = find_reg ("PCQ", NULL, dptr);
 if (pcq_r)
     pcq_r->qptr = 0;
-else return SCPE_IERR;
-sim_brk_types = sim_brk_dflt = SWMASK ('E');
-sim_vm_is_subroutine_call = &cpu_is_pc_a_subroutine_call;
+else
+    return SCPE_IERR;
 set_r_display (0, MD_KER);
-return SCPE_OK;
+return build_dib_tab ();            /* build, chk dib_tab */
 }
 
 static const char *cpu_next_caveats =
@@ -3059,12 +3382,17 @@ t_bool cpu_is_pc_a_subroutine_call (t_addr **ret_addrs)
 #define MAX_SUB_RETURN_SKIP 10
 static t_addr returns[MAX_SUB_RETURN_SKIP + 1] = {0};
 static t_bool caveats_displayed = FALSE;
+static int32 swmap[4] = {
+    SWMASK ('K') | SWMASK ('V'), SWMASK ('S') | SWMASK ('V'),
+    SWMASK ('U') | SWMASK ('V'), SWMASK ('U') | SWMASK ('V')
+    };
+int32 cm = ((PSW >> PSW_V_CM) & 03);
 
 if (!caveats_displayed) {
     caveats_displayed = TRUE;
     sim_printf ("%s", cpu_next_caveats);
     }
-if (SCPE_OK != get_aval (PC, &cpu_dev, &cpu_unit))      /* get data */
+if (SCPE_OK != get_aval (relocC(PC, swmap[cm]), &cpu_dev, &cpu_unit))/* get data */
     return FALSE;
 if ((sim_eval[0] & 0177000) == 0004000) {               /* JSR */
     int32 dst, dstspec;
@@ -3165,7 +3493,7 @@ return;
 
 /* Set history */
 
-t_stat cpu_set_hist (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat cpu_set_hist (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 int32 i, lnt;
 t_stat r;
@@ -3196,10 +3524,10 @@ return SCPE_OK;
 
 /* Show history */
 
-t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 int32 j, k, di, lnt, ir;
-char *cptr = (char *) desc;
+const char *cptr = (const char *) desc;
 t_value sim_eval[HIST_ILNT];
 t_stat r;
 InstHistory *h;
@@ -3241,10 +3569,10 @@ return SCPE_OK;
 
 /* Virtual address translation */
 
-t_stat cpu_show_virt (FILE *of, UNIT *uptr, int32 val, void *desc)
+t_stat cpu_show_virt (FILE *of, UNIT *uptr, int32 val, CONST void *desc)
 {
 t_stat r;
-char *cptr = (char *) desc;
+const char *cptr = (const char *) desc;
 uint32 va, pa;
 
 if (cptr) {

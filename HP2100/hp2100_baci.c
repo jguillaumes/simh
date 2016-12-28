@@ -1,6 +1,6 @@
 /* hp2100_baci.c: HP 12966A buffered asynchronous communications interface simulator
 
-   Copyright (c) 2007-2013, J. David Bryan
+   Copyright (c) 2007-2016, J. David Bryan
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,9 @@
 
    BACI         12966A BACI card
 
+   02-Aug-16    JDB     "baci_poll_svc" now calls "tmxr_poll_conn" unilaterally
+   13-May-16    JDB     Modified for revised SCP API function parameter types
+   24-Dec-14    JDB     Added casts for explicit downward conversions
    10-Jan-13    MP      Added DEV_MUX and additional DEVICE field values
    10-Feb-12    JDB     Deprecated DEVNO in favor of SC
                         Removed DEV_NET to allow restoration of listening port
@@ -366,7 +369,7 @@ static int32 service_time  (uint32 control_word);
 static void  update_status (void);
 static void  master_reset  (void);
 
-static uint32 fifo_get   (void);
+static uint16 fifo_get   (void);
 static void   fifo_put   (uint8 ch);
 static void   clock_uart (void);
 
@@ -377,7 +380,7 @@ IOHANDLER baci_io;
 t_stat baci_term_svc (UNIT *uptr);
 t_stat baci_poll_svc (UNIT *uptr);
 t_stat baci_reset (DEVICE *dptr);
-t_stat baci_attach (UNIT *uptr, char *cptr);
+t_stat baci_attach (UNIT *uptr, CONST char *cptr);
 t_stat baci_detach (UNIT *uptr);
 
 
@@ -871,7 +874,8 @@ while (xmit_loop && (baci_uart_thr & IN_VALID)) {       /* valid character in UA
             if ((status == SCPE_OK) &&                  /* transmitted OK? */
                 DEBUG_PRI (baci_dev, DEB_XFER))
                 fprintf (sim_deb, ">>BACI xfer: Character %s "
-                                  "transmitted from UART\n", fmt_char (baci_uart_tr));
+                                  "transmitted from UART\n",
+                                  fmt_char ((uint8) baci_uart_tr));
             }
         }
 
@@ -915,8 +919,11 @@ if (recv_loop &&                                        /* ok to process? */
 
 /* Reception */
 
-while (recv_loop &&                                     /* OK to process? */
-       (baci_uart_rr = tmxr_getc_ln (&baci_ldsc))) {    /*   and new character available? */
+while (recv_loop) {                                     /* OK to process? */
+    baci_uart_rr = tmxr_getc_ln (&baci_ldsc);           /* get a new character */
+
+    if (baci_uart_rr == 0)                              /* if there are no more characters available */
+        break;                                          /*   then quit the reception loop */
 
     if (baci_uart_rr & SCPE_BREAK) {                    /* break detected? */
         baci_status = baci_status | IN_BREAK;           /* set break status */
@@ -925,17 +932,17 @@ while (recv_loop &&                                     /* OK to process? */
             fputs (">>BACI xfer: Break detected\n", sim_deb);
         }
 
-    data_bits = 5 + (baci_cfcw & OUT_CHARSIZE);         /* calculate number of data bits */
-    data_mask = (1 << data_bits) - 1;                   /* generate mask for data bits */
-    baci_uart_rhr = baci_uart_rr & data_mask;           /* mask data into holding register */
-    baci_uart_rr = CLEAR_R;                             /* clear receiver register */
+    data_bits = 5 + (baci_cfcw & OUT_CHARSIZE);             /* calculate number of data bits */
+    data_mask = (1 << data_bits) - 1;                       /* generate mask for data bits */
+    baci_uart_rhr = (uint16) (baci_uart_rr & data_mask);    /* mask data into holding register */
+    baci_uart_rr = CLEAR_R;                                 /* clear receiver register */
 
     if (DEBUG_PRI (baci_dev, DEB_XFER))
         fprintf (sim_deb, ">>BACI xfer: Character %s received by UART\n",
                           fmt_char ((uint8) baci_uart_rhr));
 
-    if (baci_term.flags & UNIT_CAPSLOCK)                /* caps lock mode? */
-        baci_uart_rhr = toupper (baci_uart_rhr);        /* convert to upper case if lower */
+    if (baci_term.flags & UNIT_CAPSLOCK)                    /* caps lock mode? */
+        baci_uart_rhr = (uint16) toupper (baci_uart_rhr);   /* convert to upper case if lower */
 
     if (baci_cfcw & OUT_ECHO)                           /* echo wanted? */
         tmxr_putc_ln (&baci_ldsc, baci_uart_rhr);       /* send it back */
@@ -988,22 +995,24 @@ return status;
    scheduled.  It starts when the socket is attached and stops when the socket
    is detached.
 
-   As there is only one line, we only poll for a new connection when the line is
-   disconnected.
+
+   Implementation notes:
+
+    1. Even though there is only one line, we poll for new connections
+       unconditionally.  This is so that "tmxr_poll_conn" will report "All
+       connections busy" to a second Telnet connection.  Otherwise, the user's
+       client would connect but then would be silently unresponsive.
 */
 
 t_stat baci_poll_svc (UNIT *uptr)
 {
-if (baci_term.flags & UNIT_ATT) {                       /* attached to line? */
-    if ((baci_ldsc.conn == 0) &&                        /* line not connected? */
-        (tmxr_poll_conn (&baci_desc) >= 0))             /*   and new connection established? */
-        baci_ldsc.rcve = 1;                             /* enable line to receive */
+if (tmxr_poll_conn (&baci_desc) >= 0)                   /* if new connection is established */
+    baci_ldsc.rcve = 1;                                 /*   then enable line to receive */
 
-    tmxr_poll_rx (&baci_desc);                          /* poll for input */
+tmxr_poll_rx (&baci_desc);                              /* poll for input */
 
-    if (tmxr_rqln (&baci_ldsc))                         /* chars available? */
-        sim_activate (&baci_term, baci_term.wait);      /* activate I/O service */
-    }
+if (tmxr_rqln (&baci_ldsc))                             /* chars available? */
+    sim_activate (&baci_term, baci_term.wait);          /* activate I/O service */
 
 if (uptr->wait == POLL_FIRST)                           /* first poll? */
     uptr->wait = sync_poll (INITIAL);                   /* initial synchronization */
@@ -1044,7 +1053,7 @@ return SCPE_OK;
 
 /* Attach controller */
 
-t_stat baci_attach (UNIT *uptr, char *cptr)
+t_stat baci_attach (UNIT *uptr, CONST char *cptr)
 {
 t_stat status = SCPE_OK;
 
@@ -1057,17 +1066,19 @@ if (status == SCPE_OK) {
 return status;
 }
 
+
 /* Detach controller */
 
 t_stat baci_detach (UNIT *uptr)
 {
 t_stat status;
 
-status = tmxr_detach (&baci_desc, uptr);                /* detach socket */
 baci_ldsc.rcve = 0;                                     /* disable line reception */
 sim_cancel (&baci_poll);                                /* stop Telnet poll */
+status = tmxr_detach (&baci_desc, uptr);                /* detach socket */
 return status;
 }
+
 
 /* Local routines */
 
@@ -1319,9 +1330,9 @@ return ticks [GET_BAUDRATE (control_word)];             /* return service time f
    not 0.
 */
 
-static uint32 fifo_get (void)
+static uint16 fifo_get (void)
 {
-uint32 data;
+uint16 data;
 
 data = baci_fifo [baci_fget];                           /* get character */
 
@@ -1331,7 +1342,8 @@ if ((baci_fget != baci_fput) || (baci_fcount >= 128)) { /* FIFO occupied? */
 
     if (DEBUG_PRI (baci_dev, DEB_BUF))
         fprintf (sim_deb, ">>BACI buf:  Character %s get from FIFO [%d], "
-                          "character counter = %d\n", fmt_char (data), baci_fget, baci_fcount);
+                          "character counter = %d\n",
+                          fmt_char ((uint8) data), baci_fget, baci_fcount);
 
     baci_fget = (baci_fget + 1) % FIFO_SIZE;            /* bump index modulo array size */
 
@@ -1502,14 +1514,15 @@ if (baci_uart_clk > 0) {                                /* transfer in progress?
                     ((baci_cfcw & OUT_PARITY) != 0) +   /*   plus parity bit if used */
                     ((baci_cfcw & OUT_STBITS) != 0);    /*   plus extra stop bit if used */
 
-        baci_uart_rhr = baci_uart_rr >> (16 - uart_bits);   /* position data to right align */
-        baci_uart_rr = CLEAR_R;                             /* clear receiver register */
+        baci_uart_rhr = (uint16) (baci_uart_rr >> (16 - uart_bits));    /* position data to right align */
+        baci_uart_rr = CLEAR_R;                                         /* clear receiver register */
 
         if (DEBUG_PRI (baci_dev, DEB_XFER))
             fprintf (sim_deb, ">>BACI xfer: UART receiver = %06o (%s)\n",
-                              baci_uart_rhr, fmt_char (baci_uart_rhr & data_mask));
+                              baci_uart_rhr,
+                              fmt_char ((uint8) (baci_uart_rhr & data_mask)));
 
-        fifo_put (baci_uart_rhr & data_mask);           /* put data in FIFO */
+        fifo_put ((uint8) (baci_uart_rhr & data_mask)); /* put data in FIFO */
         update_status ();                               /* update FIFO status */
 
         if (baci_cfcw & OUT_PARITY) {                   /* parity present? */
@@ -1568,7 +1581,8 @@ if ((baci_uart_clk == 0) &&                             /* start of transfer? */
         if (DEBUG_PRI (baci_dev, DEB_XFER))
             fprintf (sim_deb, ">>BACI xfer: UART transmitter = %06o (%s), "
                               "clock count = %d\n", baci_uart_tr & DMASK,
-                              fmt_char (baci_uart_thr & data_mask), baci_uart_clk);
+                              fmt_char ((uint8) (baci_uart_thr & data_mask)),
+                              baci_uart_clk);
         }
 
     else {

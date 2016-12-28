@@ -1,6 +1,6 @@
 /* pdp10_cpu.c: PDP-10 CPU simulator
 
-   Copyright (c) 1993-2012, Robert M. Supnik
+   Copyright (c) 1993-2016, Robert M. Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    cpu          KS10 central processor
 
+   09-Feb-16    RMS     Fixed nested indirects and executes (Tim Litt)
    25-Mar-12    RMS     Added missing parameters to prototypes (Mark Pizzolato)
    17-Jul-07    RMS     Fixed non-portable usage in SHOW HISTORY
    28-Apr-07    RMS     Removed clock initialization
@@ -191,9 +192,8 @@ int32 flags = 0;                                        /* flags */
 int32 its_1pr = 0;                                      /* ITS 1-proceed */
 int32 stop_op0 = 0;                                     /* stop on 0 */
 int32 rlog = 0;                                         /* extend fixup log */
-int32 ind_max = 32;                                     /* nested ind limit */
-int32 xct_max = 32;                                     /* nested XCT limit */
-int32 t20_idlelock = 0;                                 /* TOPS-20 idle lock */
+int32 ind_max = 0;                                      /* nested ind limit */
+int32 xct_max = 0;                                      /* nested XCT limit */
 a10 pcq[PCQ_SIZE] = { 0 };                              /* PC queue */
 int32 pcq_p = 0;                                        /* PC queue ptr */
 REG *pcq_r = NULL;                                      /* PC queue reg ptr */
@@ -209,10 +209,10 @@ t_stat cpu_ex (t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_dep (t_value val, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_reset (DEVICE *dptr);
 t_bool cpu_is_pc_a_subroutine_call (t_addr **ret_addrs);
-t_stat cpu_set_hist (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat cpu_set_serial (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat cpu_show_serial (FILE *st, UNIT *uptr, int32 val, void *desc);
+t_stat cpu_set_hist (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat cpu_set_serial (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_serial (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 
 d10 adjsp (d10 val, a10 ea);
 void ibp (a10 ea, int32 pflgs);
@@ -252,7 +252,7 @@ int32 test_int (void);
 void set_ac_display (d10 *acbase);
 
 extern t_stat build_dib_tab (void);
-extern t_stat show_iospace (FILE *st, UNIT *uptr, int32 val, void *desc);
+extern t_stat show_iospace (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern d10 Read (a10 ea, int32 prv);                    /* read, read check */
 extern d10 ReadM (a10 ea, int32 prv);                   /* read, write check */
 extern d10 ReadE (a10 ea);                              /* read, exec */
@@ -327,7 +327,7 @@ extern t_bool wrpcst (a10 ea, int32 prv);
 extern t_bool spm (a10 ea, int32 prv);
 extern t_bool lpmr (a10 ea, int32 prv);
 extern int32 pi_ub_vec (int32 lvl, int32 *uba);
-extern t_stat tim_set_mod (UNIT *uptr, int32 val, char *cptr, void *desc);
+extern t_stat tim_set_mod (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 
 /* CPU data structures
 
@@ -340,59 +340,59 @@ extern t_stat tim_set_mod (UNIT *uptr, int32 val, char *cptr, void *desc);
 UNIT cpu_unit = { UDATA (NULL, UNIT_FIX + UNIT_BINK, MAXMEMSIZE) };
 
 REG cpu_reg[] = {
-    { ORDATA (PC, saved_PC, VASIZE) },
-    { ORDATA (FLAGS, flags, 18) },
-    { ORDATA (AC0, acs[0], 36) },                       /* addr in memory */
-    { ORDATA (AC1, acs[1], 36) },                       /* modified at exit */
-    { ORDATA (AC2, acs[2], 36) },                       /* to SCP */
-    { ORDATA (AC3, acs[3], 36) },
-    { ORDATA (AC4, acs[4], 36) },
-    { ORDATA (AC5, acs[5], 36) },
-    { ORDATA (AC6, acs[6], 36) },
-    { ORDATA (AC7, acs[7], 36) },
-    { ORDATA (AC10, acs[10], 36) },
-    { ORDATA (AC11, acs[11], 36) },
-    { ORDATA (AC12, acs[12], 36) },
-    { ORDATA (AC13, acs[13], 36) },
-    { ORDATA (AC14, acs[14], 36) },
-    { ORDATA (AC15, acs[15], 36) },
-    { ORDATA (AC16, acs[16], 36) },
-    { ORDATA (AC17, acs[17], 36) },
-    { ORDATA (PFW, pager_word, 36) },
-    { ORDATA (EBR, ebr, EBR_N_EBR) },
-    { FLDATA (PGON, ebr, EBR_V_PGON) },
-    { FLDATA (T20P, ebr, EBR_V_T20P) },
-    { ORDATA (UBR, ubr, 36) },
-    { GRDATA (CURAC, ubr, 8, 3, UBR_V_CURAC), REG_RO },
-    { GRDATA (PRVAC, ubr, 8, 3, UBR_V_PRVAC) },
-    { ORDATA (SPT, spt, 36) },
-    { ORDATA (CST, cst, 36) },
-    { ORDATA (PUR, pur, 36) },
-    { ORDATA (CSTM, cstm, 36) },
-    { ORDATA (HSB, hsb, 36) },
-    { ORDATA (DBR1, dbr1, PASIZE) },
-    { ORDATA (DBR2, dbr2, PASIZE) },
-    { ORDATA (DBR3, dbr3, PASIZE) },
-    { ORDATA (DBR4, dbr4, PASIZE) },
-    { ORDATA (PCST, pcst, 36) }, 
-    { ORDATA (PIENB, pi_enb, 7) },
-    { FLDATA (PION, pi_on, 0) },
-    { ORDATA (PIACT, pi_act, 7) },
-    { ORDATA (PIPRQ, pi_prq, 7) },
-    { ORDATA (PIIOQ, pi_ioq, 7), REG_RO },
-    { ORDATA (PIAPR, pi_apr, 7), REG_RO },
-    { ORDATA (APRENB, apr_enb, 8) },
-    { ORDATA (APRFLG, apr_flg, 8) },
-    { ORDATA (APRLVL, apr_lvl, 3) },
-    { ORDATA (RLOG, rlog, 10) },
-    { FLDATA (F1PR, its_1pr, 0) },
-    { BRDATA (PCQ, pcq, 8, VASIZE, PCQ_SIZE), REG_RO+REG_CIRC },
+    { ORDATAD (PC, saved_PC, VASIZE, "program counter") },
+    { ORDATAD (FLAGS, flags, 18, "processor flags (<13:17> unused") },
+    { ORDATAD (AC0, acs[0], 36, "active register 0") },                       /* addr in memory */
+    { ORDATAD (AC1, acs[1], 36, "active register 1") },                       /* modified at exit */
+    { ORDATAD (AC2, acs[2], 36, "active register 2") },                       /* to SCP */
+    { ORDATAD (AC3, acs[3], 36, "active register 3") },
+    { ORDATAD (AC4, acs[4], 36, "active register 4") },
+    { ORDATAD (AC5, acs[5], 36, "active register 5") },
+    { ORDATAD (AC6, acs[6], 36, "active register 6") },
+    { ORDATAD (AC7, acs[7], 36, "active register 7") },
+    { ORDATAD (AC10, acs[10], 36, "active register 10") },
+    { ORDATAD (AC11, acs[11], 36, "active register 11") },
+    { ORDATAD (AC12, acs[12], 36, "active register 12") },
+    { ORDATAD (AC13, acs[13], 36, "active register 13") },
+    { ORDATAD (AC14, acs[14], 36, "active register 14") },
+    { ORDATAD (AC15, acs[15], 36, "active register 15") },
+    { ORDATAD (AC16, acs[16], 36, "active register 16") },
+    { ORDATAD (AC17, acs[17], 36, "active register 17") },
+    { ORDATAD (PFW, pager_word, 36, "pager word register") },
+    { ORDATAD (EBR, ebr, EBR_N_EBR, "executive base register") },
+    { FLDATAD (PGON, ebr, EBR_V_PGON, "paging enabled flag") },
+    { FLDATAD (T20P, ebr, EBR_V_T20P, "TOPS-20 paging") },
+    { ORDATAD (UBR, ubr, 36, "user base register") },
+    { GRDATAD (CURAC, ubr, 8, 3, UBR_V_CURAC, "current AC block"), REG_RO },
+    { GRDATAD (PRVAC, ubr, 8, 3, UBR_V_PRVAC, "previous AC block") },
+    { ORDATAD (SPT, spt, 36, "shared pointer table") },
+    { ORDATAD (CST, cst, 36, "core status table") },
+    { ORDATAD (PUR, pur, 36, "process update register") },
+    { ORDATAD (CSTM, cstm, 36, "CST mask") },
+    { ORDATAD (HSB, hsb, 36, "halt status block address") },
+    { ORDATAD (DBR1, dbr1, PASIZE, "descriptor base register 1 (ITS)") },
+    { ORDATAD (DBR2, dbr2, PASIZE, "descriptor base register 2 (ITS)") },
+    { ORDATAD (DBR3, dbr3, PASIZE, "descriptor base register 3 (ITS)") },
+    { ORDATAD (DBR4, dbr4, PASIZE, "descriptor base register 4 (ITS)") },
+    { ORDATAD (PCST, pcst, 36, "ITS PC sampling register") }, 
+    { ORDATAD (PIENB, pi_enb, 7, "PI levels enabled") },
+    { FLDATAD (PION, pi_on, 0, "PI system enable") },
+    { ORDATAD (PIACT, pi_act, 7, "PI levels active") },
+    { ORDATAD (PIPRQ, pi_prq, 7, "PI levels with program requests") },
+    { ORDATAD (PIIOQ, pi_ioq, 7, "PI levels with I/O requests"), REG_RO },
+    { ORDATAD (PIAPR, pi_apr, 7, "PI levels with APR requests"), REG_RO },
+    { ORDATAD (APRENB, apr_enb, 8, "APR flags enabled") },
+    { ORDATAD (APRFLG, apr_flg, 8, "APR flags active") },
+    { ORDATAD (APRLVL, apr_lvl, 3, "PI level for APR interrupt") },
+    { ORDATAD (RLOG, rlog, 10, "extend fix up log") },
+    { FLDATAD (F1PR, its_1pr, 0, "ITS 1-proceed") },
+    { BRDATAD (PCQ, pcq, 8, VASIZE, PCQ_SIZE, "PC prior to last jump or interrupt;                                             most recent PC change first"), REG_RO+REG_CIRC },
     { ORDATA (PCQP, pcq_p, 6), REG_HRO },
-    { DRDATA (INDMAX, ind_max, 8), PV_LEFT + REG_NZ },
-    { DRDATA (XCTMAX, xct_max, 8), PV_LEFT + REG_NZ },
-    { ORDATA (WRU, sim_int_char, 8) },
+    { DRDATAD (INDMAX, ind_max, 8, "indirect address nesting limit; if 0, no limit"), PV_LEFT },
+    { DRDATAD (XCTMAX, xct_max, 8, "execute chaining limit; if 0, no limit"), PV_LEFT },
+    { ORDATAD (WRU, sim_int_char, 8, "interrupt character") },
     { FLDATA (STOP_ILL, stop_op0, 0) },
-    { BRDATA (REG, acs, 8, 36, AC_NUM * AC_NBLK) },
+    { BRDATAD (REG, acs, 8, 36, AC_NUM * AC_NBLK, "register sets") },
     { NULL }
     };
 
@@ -649,7 +649,6 @@ rlog = 0;                                               /* not in extend */
 pi_eval ();                                             /* eval pi system */
 if (!Q_ITS)                                             /* ~ITS, clr 1-proc */
     its_1pr = 0;
-t20_idlelock = 0;                                       /* clr T20 idle lock */
 
 /* Abort handling
 
@@ -857,17 +856,23 @@ its_2pr = its_1pr;                                      /* save 1-proc flag */
 XCT:
 op = GET_OP (inst);                                     /* get opcode */
 ac = GET_AC (inst);                                     /* get AC */
-for (indrct = inst, i = 0; i < ind_max; i++) {          /* calc eff addr */
+for (indrct = inst, i = 0; ; i++) {                     /* calc eff addr */
     ea = GET_ADDR (indrct);
     xr = GET_XR (indrct);
     if (xr)
         ea = (ea + ((a10) XR (xr, MM_EA))) & AMASK;
-    if (TST_IND (indrct))
-        indrct = Read (ea, MM_EA);
+    if (TST_IND (indrct)) {                             /* indirect? */
+        if (i != 0) {                                   /* not first cycle? */
+            int32 t = test_int ();                      /* test for intr */
+            if (t != 0)                                 /* err or intr? */
+                ABORT (t);
+            if ((ind_max != 0) && (i >= ind_max))       /* limit exceeded? */
+                ABORT (STOP_IND);
+            }
+        indrct = Read (ea, MM_EA);                      /* fetch indirect */
+        }
     else break;
     }
-if (i >= ind_max)
-    ABORT (STOP_IND);                                   /* too many ind? stop */
 if (hst_lnt) {                                          /* history enabled? */
     hst_p = (hst_p + 1);                                /* next entry */
     if (hst_p >= hst_lnt)
@@ -1072,10 +1077,15 @@ case 0255:  if (flags & (ac << 14)) {                   /* JFCL */
                 CLRF (ac << 14);
                 }
             break;
-case 0256:  if (xct_cnt++ >= xct_max)                   /* XCT */
-                ABORT (STOP_XCT);
-            inst = Read (ea, MM_OPND);
-            if (ac && !TSTF (F_USR) && !Q_ITS)
+case 0256:  if (xct_cnt++ != 0) {                       /* XCT: not first? */
+                int32 t = test_int ();                  /* test for intr */
+                if (t != 0)                             /* intr or err? */
+                    ABORT (t);
+                 if ((xct_max != 0) && (xct_cnt >= xct_max))
+                    ABORT (STOP_XCT);
+                }
+            inst = Read (ea, MM_OPND);                  /* get opnd */
+            if (ac && !TSTF (F_USR) && !Q_ITS)          /* PXCT? */
                 pflgs = pflgs | ac;
             goto XCT;
 case 0257:  if (Q_ITS) goto MUUO;                       /* MAP */
@@ -1141,7 +1151,7 @@ case 0341:  AOJ; if (TL (AC(ac))) JUMP (ea); break;     /* AOJL */
 case 0342:  AOJ; if (TE (AC(ac))) JUMP (ea); break;     /* AOJE */
 case 0343:  AOJ; if (TLE (AC(ac))) JUMP (ea); break;    /* AOJLE */
 case 0344:  AOJ; JUMP(ea);                              /* AOJA */
-            if (Q_ITS && Q_IDLE &&                      /* ITS idle? */
+            if (Q_ITS &&                                /* ITS idle? */
                 TSTF (F_USR) && (pager_PC == 017) &&    /* user mode, loc 17? */
                 (ac == 0) && (ea == 017))               /* AOJA 0,17? */
                 sim_idle (0, FALSE);
@@ -1165,19 +1175,13 @@ case 0364:  SOJ; JUMP(ea); break;                       /* SOJA */
 case 0365:  SOJ; if (TGE (AC(ac))) JUMP (ea); break;    /* SOJGE */
 case 0366:  SOJ; if (TN (AC(ac))) JUMP (ea); break;     /* SOJN */
 case 0367:  SOJ; if (TG (AC(ac))) JUMP (ea);            /* SOJG */
-            if ((ea == pager_PC) && Q_IDLE) {           /* to self, idle enab? */
-                extern int32 tmr_poll;
+            if (ea == pager_PC) {                       /* to self? */
                 if ((ac == 6) && (ea == 1) &&           /* SOJG 6,1? */
                     TSTF (F_USR) && Q_T10)              /* T10, user mode? */
-                    sim_idle (0, FALSE);
-                else if (!t20_idlelock &&               /* interlock off? */
-                    (ac == 2) && (ea == 3) &&           /* SOJG 2,3? */
-                    !TSTF (F_USR) && Q_T20 &&           /* T20, mon mode? */
-                    (sim_interval > (tmr_poll >> 1))) { /* >= half clock? */
-                    t20_idlelock = 1;                   /* set interlock */
-                    if (sim_os_ms_sleep (1))            /* sleep 1ms */
-                        sim_interval = 0;               /* if ok, sched event */
-                    }
+                    sim_idle (0, FALSE);                /* idle */
+                else if ((ac == 2) && (ea == 3) &&      /* SOJG 2,3? */
+                    !TSTF (F_USR) && Q_T20)             /* T20, mon mode? */
+                    sim_idle (0, FALSE);                /* idle */
                 }                    
             break;
 case 0370:  SOS; break;                                 /* SOS */
@@ -1831,17 +1835,23 @@ a10 calc_ea (d10 inst, int32 prv)
 int32 i, ea, xr;
 d10 indrct;
 
-for (indrct = inst, i = 0; i < ind_max; i++) {
+for (indrct = inst, i = 0; ; i++) {
     ea = GET_ADDR (indrct);
     xr = GET_XR (indrct);
     if (xr)
         ea = (ea + ((a10) XR (xr, prv))) & AMASK;
-    if (TST_IND (indrct))
+    if (TST_IND (indrct)) {                             /* indirect? */
+        if (i != 0) {                                   /* not first cycle? */
+            int32 t = test_int ();                      /* test for intr */
+            if (t != 0)                                 /* intr or error? */
+                ABORT (t);
+            if ((ind_max != 0) && (i >= ind_max))       /* limit exceeded? */
+                ABORT (STOP_IND);
+            }
         indrct = Read (ea, prv);
+        }
     else break;
     }
-if (i >= ind_max)
-    ABORT (STOP_IND);
 return ea;
 }
 
@@ -1882,17 +1892,23 @@ d10 calc_jrstfea (d10 inst, int32 pflgs)
 int32 i, xr;
 d10 mb;
 
-for (i = 0; i < ind_max; i++) {
+for (i = 0; ; i++) {
     mb = inst;
     xr = GET_XR (inst);
     if (xr)
         mb = (mb & AMASK) + XR (xr, MM_EA);
-    if (TST_IND (inst))
+    if (TST_IND (inst)) {                               /* indirect? */
+        if (i != 0) {                                   /* not first cycle? */
+            int32 t = test_int ();                      /* test for intr */
+            if (t != 0)                                 /* intr or error? */
+                ABORT (t);
+            if ((ind_max != 0) && (i >= ind_max))       /* limit exceeded? */
+                ABORT (STOP_IND);
+            }
         inst = Read (((a10) mb) & AMASK, MM_EA);
+        }
     else break;
     }
-if (i >= ind_max)
-    ABORT (STOP_IND);
 return (mb & DMASK);
 }
 
@@ -2188,8 +2204,11 @@ if (ea & APR_SENB)                                      /* set enables? */
     apr_enb = apr_enb | bits;
 if (ea & APR_CENB)                                      /* clear enables? */
     apr_enb = apr_enb & ~bits;
-if (ea & APR_CFLG)                                      /* clear flags? */
+if (ea & APR_CFLG) {                                    /* clear flags? */
+    if ((bits & APRF_TIM) && (apr_flg & APRF_TIM))
+        sim_rtcn_tick_ack (30, 0);
     apr_flg = apr_flg & ~bits;
+    }
 if (ea & APR_SFLG)                                      /* set flags? */
     apr_flg = apr_flg | bits;
 if (apr_flg & APRF_ITC) {                               /* interrupt console? */
@@ -2481,7 +2500,7 @@ return;
 
 /* Set history */
 
-t_stat cpu_set_hist (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat cpu_set_hist (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 int32 i, lnt;
 t_stat r;
@@ -2512,10 +2531,10 @@ return SCPE_OK;
 
 /* Show history */
 
-t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 int32 k, di, lnt;
-char *cptr = (char *) desc;
+const char *cptr = (const char *) desc;
 t_stat r;
 t_value sim_eval;
 InstHistory *h;
@@ -2552,7 +2571,7 @@ return SCPE_OK;
 
 /* Set serial */
 
-t_stat cpu_set_serial (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat cpu_set_serial (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 int32 lnt;
 t_stat r;
@@ -2570,7 +2589,7 @@ return SCPE_OK;
 
 /* Show serial */
 
-t_stat cpu_show_serial (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat cpu_show_serial (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 fprintf (st, "Serial: " );
 if( (apr_serial == -1) || (!Q_ITS && apr_serial < 4096) ) {

@@ -247,12 +247,15 @@ extern int32 tmr_poll;                                  /* instructions per tick
 #define DMC_SEL6_M_HDX      0x0400
 #define DMC_SEL6_V_LONGSTRT 11
 #define DMC_SEL6_M_LONGSTRT 0x0800
-
+/* Bit flags used in DMR modem status after RDI */
+#define DMC_SEL6_V_LMODEM 11
+#define DMC_SEL6_M_LMODEM 0x0800
 
 #define DSPDSR     0x22b3    /* KMC opcode to move line unit status to SEL2 */
 #define DROPDTR    0xa40b    /* KMC opcode to drop DTR */
 #define UINST_CNF  0x2296    /* KMC opcode to get config switches */
-#define UINST_RROM 0x814d    /* KMC opcode to read DMC ROM */
+#define UINST_CNF3 0x2293    /* KMC opcode ditto but to BSEL3 */
+#define UINST_RROM 0x8100    /* KMC opcode to read DMC ROM, address in low bits */
 
 #define SEL2_TYPEO_BIT 0
 #define SEL2_RDO_BIT 7
@@ -291,6 +294,140 @@ typedef enum {
     OutputControl
     } TransferState;
 
+/* 129 words taken from RSTS/E ECO checker listing; the rest is not
+   used so we can leave it as zeroes.  */
+static const uint16 hi_speed_ucode[256] = {
+    063220,
+    063223,
+    063237,
+    063232,
+    061200,
+    061202,
+    03370,
+    063130,
+    076423,
+    063060,
+    0101414,
+    0100407,
+    03401,
+    063231,
+    010162,
+    0626,
+    062234,
+    016403,
+    016402,
+    016406,
+    016407,
+    016401,
+    010210,
+    016455,
+    016472,
+    010067,
+    016471,
+    02471,
+    043236,
+    010022,
+    016424,
+    02424,
+    043235,
+    010240,
+    016642,
+    02642,
+    0600,
+    061221,
+    0110642,
+    020620,
+    0173202,
+    020640,
+    0167203,
+    010210,
+    0140620,
+    020620,
+    0103060,
+    0100463,
+    0433,
+    060342,
+    0101047,
+    0123620,
+    0113246,
+    023240,
+    060520,
+    0103451,
+    010211,
+    0140620,
+    060601,
+    0103100,
+    0123400,
+    01620,
+    0117034,
+    0100447,
+    02611,
+    0100447,
+    0123400,
+    0103505,
+    0114434,
+    060520,
+    0103603,
+    0120400,
+    01620,
+    0103047,
+    02514,
+    0100447,
+    0123400,
+    0102527,
+    02654,
+    0102124,
+    01620,
+    02722,
+    0102524,
+    02701,
+    060601,
+    0102130,
+    0100447,
+    0102140,
+    02472,
+    0500,
+    061260,
+    010177,
+    016402,
+    02400,
+    042233,
+    0114474,
+    060721,
+    0102130,
+    02472,
+    010017,
+    0136500,
+    0136520,
+    0122560,
+    0123000,
+    0500,
+    061260,
+    02133,
+    040620,
+    0103164,
+    010151,
+    016406,
+    02700,
+    063161,
+    0641,
+    03374,
+    0110727,
+    03004,
+    063070,
+    010017,
+    0731,
+    0110463,
+    010154,
+    057310,
+    057231,
+    057235,
+    043237,
+    043232,
+    063170,
+    063161
+};
+    
 /* Queue elements
  * A queue is a double-linked list of element headers.
  * The head of the queue is an element without a body.
@@ -311,7 +448,7 @@ typedef struct queuehdr QH;
 
 typedef struct buffer_queue {
     QH hdr;                             /* Forward/Back Buffer pointers */
-    char * name;                        /* Queue name */
+    const char * name;                  /* Queue name */
     size_t size;                        /* Maximum number of entries (0 means no limit) */
     size_t count;                       /* Current Used Count */
     struct dmc_controller *controller;  /* back pointer to the containing controller */
@@ -907,32 +1044,32 @@ t_stat dmc_svc (UNIT * uptr);
 t_stat dmc_poll_svc (UNIT * uptr);
 t_stat dmc_timer_svc (UNIT * uptr);
 t_stat dmc_reset (DEVICE * dptr);
-t_stat dmc_attach (UNIT * uptr, char * cptr);
+t_stat dmc_attach (UNIT * uptr, CONST char * cptr);
 t_stat dmc_detach (UNIT * uptr);
 int32 dmc_ininta   (void);
 int32 dmc_outinta (void);
-t_stat dmc_setnumdevices (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat dmc_shownumdevices (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat dmc_setpeer (UNIT* uptr, int32 val, char* cptr, void* desc);
-t_stat dmc_showpeer (FILE* st, UNIT* uptr, int32 val, void* desc);
-t_stat dmc_setspeed (UNIT* uptr, int32 val, char* cptr, void* desc);
-t_stat dmc_showspeed (FILE* st, UNIT* uptr, int32 val, void* desc);
-t_stat dmc_setcorrupt (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat dmc_showcorrupt (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat dmc_set_microdiag (UNIT* uptr, int32 val, char* cptr, void* desc);
-t_stat dmc_show_microdiag (FILE* st, UNIT* uptr, int32 val, void* desc);
-t_stat dmc_settype (UNIT* uptr, int32 val, char* cptr, void* desc);
-t_stat dmc_showtype (FILE* st, UNIT* uptr, int32 val, void* desc);
-t_stat dmc_setstats (UNIT* uptr, int32 val, char* cptr, void* desc);
-t_stat dmc_showstats (FILE* st, UNIT* uptr, int32 val, void* desc);
-t_stat dmc_showqueues (FILE* st, UNIT* uptr, int32 val, void* desc);
-t_stat dmc_setconnectpoll (UNIT* uptr, int32 val, char* cptr, void* desc);
-t_stat dmc_showconnectpoll (FILE* st, UNIT* uptr, int32 val, void* desc);
-t_stat dmc_showddcmp (FILE* st, UNIT* uptr, int32 val, void* desc);
-t_stat dmc_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr);
-t_stat dmc_help_attach (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr);
-char *dmc_description (DEVICE *dptr);
-char *dmp_description (DEVICE *dptr);
+t_stat dmc_setnumdevices (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat dmc_shownumdevices (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat dmc_setpeer (UNIT* uptr, int32 val, CONST char* cptr, void* desc);
+t_stat dmc_showpeer (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
+t_stat dmc_setspeed (UNIT* uptr, int32 val, CONST char* cptr, void* desc);
+t_stat dmc_showspeed (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
+t_stat dmc_setcorrupt (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat dmc_showcorrupt (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat dmc_set_microdiag (UNIT* uptr, int32 val, CONST char* cptr, void* desc);
+t_stat dmc_show_microdiag (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
+t_stat dmc_settype (UNIT* uptr, int32 val, CONST char* cptr, void* desc);
+t_stat dmc_showtype (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
+t_stat dmc_setstats (UNIT* uptr, int32 val, CONST char* cptr, void* desc);
+t_stat dmc_showstats (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
+t_stat dmc_showqueues (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
+t_stat dmc_setconnectpoll (UNIT* uptr, int32 val, CONST char* cptr, void* desc);
+t_stat dmc_showconnectpoll (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
+t_stat dmc_showddcmp (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
+t_stat dmc_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
+t_stat dmc_help_attach (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
+const char *dmc_description (DEVICE *dptr);
+const char *dmp_description (DEVICE *dptr);
 int dmc_is_attached (UNIT* uptr);
 int dmc_is_dmc (CTLR *controller);
 int dmc_is_rqi_set (CTLR *controller);
@@ -946,10 +1083,11 @@ void dmc_set_count (CTLR *controller, uint16 count);
 uint8 dmc_get_modem (CTLR *controller);
 void dmc_set_modem_dtr (CTLR *controller);
 void dmc_clr_modem_dtr (CTLR *controller);
+void dmc_process_immediate(CTLR *controller);
 void dmc_process_command (CTLR *controller);
 t_bool dmc_buffer_fill_receive_buffers (CTLR *controller);
 void dmc_start_transfer_buffer (CTLR *controller);
-void dmc_buffer_queue_init (CTLR *controller, BUFFER_QUEUE *q, char *name, size_t size, BUFFER *buffers);
+void dmc_buffer_queue_init (CTLR *controller, BUFFER_QUEUE *q, const char *name, size_t size, BUFFER *buffers);
 void dmc_buffer_queue_init_all (CTLR *controller);
 BUFFER *dmc_buffer_queue_head (BUFFER_QUEUE *q);
 BUFFER *dmc_buffer_allocate (CTLR *controller);
@@ -971,16 +1109,16 @@ void dmc_queue_control_out (CTLR *controller, uint16 sel6);
 
 
 DEBTAB dmc_debug[] = {
-    {"TRACE",   DBG_TRC},
-    {"WARN",    DBG_WRN},
-    {"REG",     DBG_REG},
-    {"INTREG",  DBG_RGC},
-    {"INFO",    DBG_INF},
-    {"DATA",    DBG_DAT},
-    {"DATASUM", DBG_DTS},
-    {"MODEM",   DBG_MDM},
-    {"CONNECT", DBG_CON},
-    {"INT",     DBG_INT},
+    {"TRACE",   DBG_TRC, "trace routine calls"},
+    {"WARN",    DBG_WRN, "warnings"},
+    {"REG",     DBG_REG, "read/write registers"},
+    {"INTREG",  DBG_RGC, "internal read/write registers changes"},
+    {"INFO",    DBG_INF, "informational messages (high level trace)"},
+    {"DATA",    DBG_DAT, "data buffer contents"},
+    {"DATASUM", DBG_DTS, "data summary"},
+    {"MODEM",   DBG_MDM, "modem related transitions"},
+    {"CONNECT", DBG_CON, "connection establishment"},
+    {"INT",     DBG_INT, "interrupt activites"},
     {0}
     };
 
@@ -998,9 +1136,10 @@ uint16 dmc_sel2[DMC_NUMDEVICE];
 uint16 dmc_sel4[DMC_NUMDEVICE];
 uint16 dmc_sel6[DMC_NUMDEVICE];
 
+#define PEERSIZE 512
 uint32 dmc_speed[DMC_NUMDEVICE];
-char dmc_peer[DMC_NUMDEVICE][CBUFSIZE];
-char dmc_port[DMC_NUMDEVICE][CBUFSIZE];
+char dmc_peer[DMC_NUMDEVICE][PEERSIZE];
+char dmc_port[DMC_NUMDEVICE][PEERSIZE];
 uint32 dmc_baseaddr[DMC_NUMDEVICE];
 uint16 dmc_basesize[DMC_NUMDEVICE];
 uint8 dmc_modem[DMC_NUMDEVICE];
@@ -1015,8 +1154,8 @@ uint16 dmp_sel6[DMC_NUMDEVICE];
 uint16 dmp_sel10[DMC_NUMDEVICE];
 
 uint32 dmp_speed[DMP_NUMDEVICE];
-char dmp_peer[DMP_NUMDEVICE][CBUFSIZE];
-char dmp_port[DMP_NUMDEVICE][CBUFSIZE];
+char dmp_peer[DMP_NUMDEVICE][PEERSIZE];
+char dmp_port[DMP_NUMDEVICE][PEERSIZE];
 uint32 dmp_baseaddr[DMP_NUMDEVICE];
 uint16 dmp_basesize[DMP_NUMDEVICE];
 uint8 dmp_modem[DMP_NUMDEVICE];
@@ -1058,8 +1197,8 @@ REG dmc_reg[] = {
     { BRDATAD (SPEED,            dmc_speed, DEV_RDX, 32, DMC_NUMDEVICE,         "line speed") },
     { BRDATAD (CORRUPT,     dmc_corruption, DEV_RDX, 32, DMC_NUMDEVICE,         "data corruption factor (0.1%)") },
     { BRDATAD (DIAG,         dmc_microdiag, DEV_RDX,  1, DMC_NUMDEVICE,         "Microdiagnostic Enabled") },
-    { BRDATAD (PEER,              dmc_peer, DEV_RDX,  8, DMC_NUMDEVICE*CBUFSIZE, "peer address:port") },
-    { BRDATAD (PORT,              dmc_port, DEV_RDX,  8, DMC_NUMDEVICE*CBUFSIZE, "listen port") },
+    { BRDATAD (PEER,              dmc_peer, DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "peer address:port") },
+    { BRDATAD (PORT,              dmc_port, DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "listen port") },
     { BRDATAD (BASEADDR,      dmc_baseaddr, DEV_RDX, 32, DMC_NUMDEVICE,         "program set base address") },
     { BRDATAD (BASESIZE,      dmc_basesize, DEV_RDX, 16, DMC_NUMDEVICE,         "program set base size") },
     { BRDATAD (MODEM,            dmc_modem, DEV_RDX,  8, DMC_NUMDEVICE,         "modem control bits") },
@@ -1076,8 +1215,8 @@ REG dmp_reg[] = {
     { BRDATAD (SEL10,            dmp_sel10, DEV_RDX, 16, DMP_NUMDEVICE,         "Select 10 CSR") },
     { BRDATAD (SPEED,            dmp_speed, DEV_RDX, 32, DMC_NUMDEVICE,         "line speed") },
     { BRDATAD (CORRUPT,     dmp_corruption, DEV_RDX, 32, DMC_NUMDEVICE,         "data corruption factor (0.1%)") },
-    { BRDATAD (PEER,              dmp_peer, DEV_RDX,  8, DMC_NUMDEVICE*CBUFSIZE, "peer address:port") },
-    { BRDATAD (PORT,              dmp_port, DEV_RDX,  8, DMC_NUMDEVICE*CBUFSIZE, "listen port") },
+    { BRDATAD (PEER,              dmp_peer, DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "peer address:port") },
+    { BRDATAD (PORT,              dmp_port, DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "listen port") },
     { BRDATAD (BASEADDR,      dmp_baseaddr, DEV_RDX, 32, DMC_NUMDEVICE,         "program set base address") },
     { BRDATAD (BASESIZE,      dmp_basesize, DEV_RDX, 16, DMC_NUMDEVICE,         "program set base size") },
     { BRDATAD (MODEM,            dmp_modem, DEV_RDX,  8, DMP_NUMDEVICE,         "modem control bits") },
@@ -1240,7 +1379,7 @@ for (i=0; i<DMC_NUMDEVICE + DMP_NUMDEVICE; i++) {
 return 0;
 }
 
-t_stat dmc_showpeer (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat dmc_showpeer (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 DEVICE *dptr = (UNIBUS) ? ((&dmc_dev == find_dev_from_unit(uptr)) ? &dmc_dev : &dmp_dev) : &dmv_dev;
 int32 dmc = (int32)(uptr-dptr->units);
@@ -1253,28 +1392,26 @@ else
 return SCPE_OK;
 }
 
-t_stat dmc_setpeer (UNIT* uptr, int32 val, char* cptr, void* desc)
+t_stat dmc_setpeer (UNIT* uptr, int32 val, CONST char* cptr, void* desc)
 {
 DEVICE *dptr = (UNIBUS) ? ((&dmc_dev == find_dev_from_unit(uptr)) ? &dmc_dev : &dmp_dev) : &dmv_dev;
 int32 dmc = (int32)(uptr-dptr->units);
 char *peer = ((dptr == &dmc_dev)? &dmc_peer[dmc][0] : &dmp_peer[dmc][0]);
-t_stat status = SCPE_OK;
-char host[CBUFSIZE], port[CBUFSIZE];
+char host[PEERSIZE], port[PEERSIZE];
 
 if ((!cptr) || (!*cptr))
     return SCPE_ARG;
 if (dmc_is_attached(uptr))
     return SCPE_ALATT;
-status = sim_parse_addr (cptr, host, sizeof(host), NULL, port, sizeof(port), NULL, NULL);
-if (status != SCPE_OK)
-    return status;
+if (sim_parse_addr (cptr, host, sizeof(host), NULL, port, sizeof(port), NULL, NULL))
+    return SCPE_ARG;
 if (host[0] == '\0')
     return SCPE_ARG;
-strncpy(peer, cptr, CBUFSIZE-1);
-return status;
+strncpy(peer, cptr, PEERSIZE-1);
+return SCPE_OK;
 }
 
-t_stat dmc_showspeed (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat dmc_showspeed (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 DEVICE *dptr = (UNIBUS) ? ((&dmc_dev == find_dev_from_unit(uptr)) ? &dmc_dev : &dmp_dev) : &dmv_dev;
 int32 dmc = (int32)(uptr-dptr->units);
@@ -1288,7 +1425,7 @@ return SCPE_OK;
 }
 
 
-t_stat dmc_setspeed (UNIT* uptr, int32 val, char* cptr, void* desc)
+t_stat dmc_setspeed (UNIT* uptr, int32 val, CONST char* cptr, void* desc)
 {
 DEVICE *dptr = (UNIBUS) ? ((&dmc_dev == find_dev_from_unit(uptr)) ? &dmc_dev : &dmp_dev) : &dmv_dev;
 int32 dmc = (int32)(uptr-dptr->units);
@@ -1305,7 +1442,7 @@ speeds[dmc] = newspeed;
 return SCPE_OK;
 }
 
-t_stat dmc_show_microdiag (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat dmc_show_microdiag (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 int32 dmc = (int32)(uptr-dmc_dev.units);
 
@@ -1317,7 +1454,7 @@ return SCPE_OK;
  *
  * See ddcmp_feedCorruptionTroll for usage.
  */
-t_stat dmc_setcorrupt (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat dmc_setcorrupt (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 DEVICE *dptr = (UNIBUS) ? ((&dmc_dev == find_dev_from_unit(uptr)) ? &dmc_dev : &dmp_dev) : &dmv_dev;
 int32 dmc = (int32)(uptr-dptr->units);
@@ -1339,7 +1476,7 @@ return SCPE_OK;
 
 /* Display the corruption troll's appetite */
 
-t_stat dmc_showcorrupt (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat dmc_showcorrupt (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 DEVICE *dptr = (UNIBUS) ? ((&dmc_dev == find_dev_from_unit(uptr)) ? &dmc_dev : &dmp_dev) : &dmv_dev;
 int32 dmc = (int32)(uptr-dptr->units);
@@ -1354,7 +1491,7 @@ else
 return SCPE_OK;
 }
 
-t_stat dmc_set_microdiag(UNIT* uptr, int32 val, char* cptr, void* desc)
+t_stat dmc_set_microdiag(UNIT* uptr, int32 val, CONST char* cptr, void* desc)
 {
 int32 dmc = (int32)(uptr-dmc_dev.units);
 char gbuf[CBUFSIZE];
@@ -1372,7 +1509,7 @@ else
 return SCPE_OK;
 }
 
-t_stat dmc_showtype (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat dmc_showtype (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 CTLR *controller = dmc_get_controller_from_unit(uptr);
 
@@ -1393,7 +1530,7 @@ switch (controller->dev_type) {
 return SCPE_OK;
 }
 
-t_stat dmc_settype (UNIT* uptr, int32 val, char* cptr, void* desc)
+t_stat dmc_settype (UNIT* uptr, int32 val, CONST char* cptr, void* desc)
 {
 char gbuf[80];
 t_stat status = SCPE_OK;
@@ -1415,7 +1552,7 @@ else
 return status;
 }
 
-t_stat dmc_showstats (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat dmc_showstats (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 CTLR *controller = dmc_get_controller_from_unit(uptr);
     
@@ -1511,7 +1648,7 @@ if (detail) {
     }
 }
 
-t_stat dmc_showqueues (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat dmc_showqueues (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 CTLR *controller     = dmc_get_controller_from_unit(uptr);
 static const char *states[] = {"Uninitialised", "Initialised", "Running", "Halted"};
@@ -1535,7 +1672,7 @@ if (controller->control_out) {
 return SCPE_OK;
 }
 
-t_stat dmc_setstats (UNIT* uptr, int32 val, char* cptr, void* desc)
+t_stat dmc_setstats (UNIT* uptr, int32 val, CONST char* cptr, void* desc)
 {
 CTLR *controller = dmc_get_controller_from_unit(uptr);
 
@@ -1552,15 +1689,15 @@ sim_printf("Statistics reset\n");
 return SCPE_OK;
 }
 
-t_stat dmc_showconnectpoll (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat dmc_showconnectpoll (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
-uint32 poll_interval = *((uint32 *)desc);
+uint32 poll_interval = *((const uint32 *)desc);
 
 fprintf(st, "connectpoll=%u", poll_interval);
 return SCPE_OK;
 }
 
-t_stat dmc_setconnectpoll (UNIT* uptr, int32 val, char* cptr, void* desc)
+t_stat dmc_setconnectpoll (UNIT* uptr, int32 val, CONST char* cptr, void* desc)
 {
 t_stat status = SCPE_OK;
 uint32 *poll_interval = ((uint32 *)desc);
@@ -1577,7 +1714,7 @@ return tmxr_connection_poll_interval ((poll_interval == &dmc_connect_poll) ? &dm
 
 /* SET LINES processor */
 
-t_stat dmc_setnumdevices (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat dmc_setnumdevices (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 int32 newln;
 uint32 i, j;
@@ -1622,7 +1759,7 @@ mp->uptr = dptr->units + newln;                     /* Identify polling unit */
 return dmc_reset ((DEVICE *)desc);                  /* setup devices and auto config */
 }
 
-t_stat dmc_shownumdevices (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat dmc_shownumdevices (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 DEVICE *dptr = (UNIBUS) ? find_dev_from_unit (uptr) : &dmv_dev;
 
@@ -1630,7 +1767,7 @@ fprintf (st, "lines=%d", dptr->numunits-2);
 return SCPE_OK;
 }
 
-t_stat dmc_showddcmp (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat dmc_showddcmp (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 CTLR *controller = dmc_get_controller_from_unit(uptr);
 static const char *states[] = {"Halt", "IStart", "AStart", "Run", "Maintenance"};
@@ -1655,7 +1792,7 @@ fprintf(st, "   TimeRemaining: %d\n", controller->link.TimeRemaining);
 return SCPE_OK;
 }
 
-t_stat dmc_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr)
+t_stat dmc_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
 const char helpString[] =
  /* The '*'s in the next line represent the standard text width of a help line */
@@ -1852,7 +1989,7 @@ sprintf (connectpoll, "%d", DMC_CONNECT_POLL);
 return scp_help (st, dptr, uptr, flag, helpString, cptr, devname, devcount, connectpoll);
 }
 
-t_stat dmc_help_attach (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr)
+t_stat dmc_help_attach (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
 return dmc_help (st, dptr, uptr, flag, DMC_HLP_ATTACH);
 }
@@ -1920,11 +2057,11 @@ ans &= mask;
 return ans;
 }
 
-void dmc_dumpregsel0(CTLR *controller, int trace_level, char * prefix, uint16 data)
+void dmc_dumpregsel0(CTLR *controller, int trace_level, const char * prefix, uint16 data)
 {
-char *type_str = "";
+const char *type_str = "";
 uint16 type = dmc_bitfld(data, DMC_SEL0_V_ITYPE, DMC_SEL0_S_ITYPE);
-static char *dmc_types[] = {"XMT BA/CC", "CNTL IN", "HALT", "BASE IN", "RCV BA/CC", "?????",  "?????", "?????"};
+static const char *dmc_types[] = {"XMT BA/CC", "CNTL IN", "HALT", "BASE IN", "RCV BA/CC", "?????",  "?????", "?????"};
 
 if (dmc_is_dmc(controller)) {
     if (dmc_is_rqi_set(controller)) {
@@ -1967,11 +2104,11 @@ else {
     }
 }
 
-void dmc_dumpregsel2(CTLR *controller, int trace_level, char *prefix, uint16 data)
+void dmc_dumpregsel2(CTLR *controller, int trace_level, const char *prefix, uint16 data)
 {
-char *type_str = "";
+const char *type_str = "";
 uint16 type = dmc_bitfld(data, DMC_SEL2_V_CODE, DMC_SEL2_S_CODE);
-static char *dmc_types[] = {"XMT BA/CC OUT", "CNTL OUT", "?????", "?????", "RCV BA/CC OUT", "?????",  "?????", "?????"};
+static const char *dmc_types[] = {"XMT BA/CC OUT", "CNTL OUT", "?????", "?????", "RCV BA/CC OUT", "?????",  "?????", "?????"};
 
 type_str = dmc_types[type];
 
@@ -1991,7 +2128,7 @@ sim_debug(
     );
 }
 
-void dmc_dumpregsel4(CTLR *controller, int trace_level, char *prefix, uint16 data)
+void dmc_dumpregsel4(CTLR *controller, int trace_level, const char *prefix, uint16 data)
 {
 if (dmc_is_rdyi_set(controller)) {
     sim_debug(
@@ -2021,7 +2158,7 @@ else {
     }
 }
 
-void dmc_dumpregsel6(CTLR *controller, int trace_level, char *prefix, uint16 data)
+void dmc_dumpregsel6(CTLR *controller, int trace_level, const char *prefix, uint16 data)
 {
 if (dmc_is_rdyi_set(controller)) {
     sim_debug(
@@ -2045,7 +2182,7 @@ else {
     }
 }
 
-void dmc_dumpregsel10(CTLR *controller, int trace_level, char *prefix, uint16 data)
+void dmc_dumpregsel10(CTLR *controller, int trace_level, const char *prefix, uint16 data)
 {
 sim_debug(
     trace_level,
@@ -2092,7 +2229,7 @@ return ans;
 
 void dmc_setreg(CTLR *controller, int reg, uint16 data, int ctx)
 {
-char *trace = "Setting";
+const char *trace = "Setting";
 
 switch (dmc_getsel(reg)) {
     case 00:
@@ -2202,8 +2339,12 @@ void dmc_set_rdyi(CTLR *controller)
 {
 if (dmc_is_dmc(controller)) {
     dmc_setreg(controller, 0, *controller->csrs->sel0 | DMC_SEL0_M_RDI, DBG_RGC);
-    dmc_setreg(controller, 4, *controller->modem | 0x0800, DBG_RGC);
-    dmc_setreg(controller, 6, *controller->modem & DMC_SEL4_M_DTR, DBG_RGC);
+    if (controller->dev_type == DMR) {
+        dmc_setreg(controller, 4, *controller->modem | 0x0800, DBG_RGC);
+        dmc_setreg(controller, 6,
+                   (*controller->modem & DMC_SEL4_M_DTR) | DMC_SEL6_M_LMODEM,
+                   DBG_RGC);
+        }
     }
 else
     dmc_setreg(controller, 2, *controller->csrs->sel2 | DMP_SEL2_M_RDI, DBG_RGC);
@@ -2302,7 +2443,8 @@ dmc_setreg(controller, 6, *controller->csrs->sel6 | DMC_SEL6_M_LOSTDATA, DBG_RGC
 
 void dmc_clear_master_clear(CTLR *controller)
 {
-dmc_setreg(controller, 0, *controller->csrs->sel0 & ~DMC_SEL0_M_MCLEAR, DBG_RGC);
+dmc_setreg(controller, 0,
+           *controller->csrs->sel0 & ~(DMC_SEL0_M_MCLEAR|DMC_SEL0_M_STEPUP|DMC_SEL0_M_ROMI|DMC_SEL0_M_ROMO|DMC_SEL0_M_LU_LOOP|DMC_SEL0_M_STEPLU), DBG_RGC);
 }
 
 void dmc_set_run(CTLR *controller)
@@ -2340,7 +2482,6 @@ while ((control = controller->control_out)) {
     free (control);
     }
 controller->control_out = NULL;
-dmc_setreg(controller, 0, 0, DBG_RGC);
 if (controller->dev_type == DMR) {
     if (dmc_is_attached(controller->unit)) {
         /* Indicates microdiagnostics complete */
@@ -2355,19 +2496,10 @@ if (controller->dev_type == DMR) {
         dmc_setreg(controller, 2, 0x0200, DBG_RGC);
         }
     }
-else {
-    /* preserve contents of BSEL3 if DMC-11 */
-    dmc_setreg(controller, 2, *controller->csrs->sel2 & 0xFF00, DBG_RGC);
-    }
-if (controller->dev_type == DMP)
+if (controller->dev_type == DMP) {
     dmc_setreg(controller, 4, 077, DBG_RGC);
-else
-    dmc_setreg(controller, 4, 0, DBG_RGC);
-
-if (controller->dev_type == DMP)
     dmc_setreg(controller, 6, 0305, DBG_RGC);
-else
-    dmc_setreg(controller, 6, 0, DBG_RGC);
+    }
 dmc_buffer_queue_init_all(controller);
 
 controller->transfer_state = Idle;
@@ -2556,7 +2688,7 @@ if (active)
 return SCPE_OK;
 }
 
-void dmc_buffer_queue_init(CTLR *controller, BUFFER_QUEUE *q, char *name, size_t size, BUFFER *buffers)
+void dmc_buffer_queue_init(CTLR *controller, BUFFER_QUEUE *q, const char *name, size_t size, BUFFER *buffers)
 {
 q->name = name;
 initqueue (&q->hdr, q, size, buffers, sizeof(*buffers));
@@ -2644,7 +2776,7 @@ return ((q->hdr.next == &q->hdr) ? NULL : (BUFFER *)q->hdr.next);
 
 void dmc_queue_control_out(CTLR *controller, uint16 sel6)
 {
-CONTROL_OUT *control = calloc(1, sizeof(*control));
+CONTROL_OUT *control = (CONTROL_OUT *)calloc(1, sizeof(*control));
 CONTROL_OUT *last = NULL;
 
 control->sel6 = sel6;
@@ -2813,8 +2945,8 @@ else {  /* DMP */
 
         if (controller->transfer_type == DMP_C_TYPE_MODE) {
             uint16 mode = sel6 & DMP_TYPE_INPUT_MASK;
-            char * duplex = (mode & 1) ? "Full-Duplex" : "Half-Duplex";
-            char * config;
+            const char * duplex = (mode & 1) ? "Full-Duplex" : "Half-Duplex";
+            const char * config;
 
             if (mode & 4)
                 config = "Point-to-point";
@@ -2836,7 +2968,7 @@ else {  /* DMP */
                         sim_debug(DBG_WRN, controller->device, "%s%d: Transmit Buffer command (not processed yet)\n", controller->device->name, controller->index);
                         }
                     else {
-                        sim_debug(DBG_WRN, controller->device, "%s%d: Unrecognised command code %hu\n", controller->device->name, controller->index, controller->transfer_type);
+                        sim_debug(DBG_WRN, controller->device, "%s%d: Unrecognised command code 0x%X\n", controller->device->name, controller->index, controller->transfer_type);
                         }
 
         controller->transfer_state = Idle;
@@ -3484,12 +3616,58 @@ while (buffer) {
     }
 }
 
-void dmc_process_command(CTLR *controller)
+void dmc_check_romi(CTLR *controller)
+{
+if (dmc_is_dmc (controller) &&
+    (*controller->csrs->sel0 & DMC_SEL0_M_ROMI) &&
+    (*controller->csrs->sel0 & (DMC_SEL0_M_STEPUP | DMC_SEL0_M_RUN))) {
+    /* DMC-11 or DMR-11, with ROMI and either STEP or RUN bits set.  */
+    switch (*controller->csrs->sel6) {
+        case DSPDSR:    /* 0x22b3 (read line status instruction), set the DSR and high speed bits in SEL2.  */
+            sim_debug(DBG_TRC, controller->device, "%s%d: dmc_check_romi(). report DSR\n", controller->device->name, controller->index);
+            dmc_setreg (controller, 2, 0xa00, DBG_RGC);
+            break;
+        case DROPDTR:   /* 0xa40b (drop DTR instruction) - VMS Driver uses this  */
+            sim_debug(DBG_TRC, controller->device, "%s%d: dmc_check_romi(). drop_DTR\n", controller->device->name, controller->index);
+            dmc_clr_modem_dtr (controller);
+            break;
+        case UINST_CNF3: /* 0x2293 (config switches to BSEL3) RSTS uses this */
+            sim_debug(DBG_TRC, controller->device, "%s%d: dmc_check_romi(). report config\n", controller->device->name, controller->index);
+            dmc_setreg (controller, 2, 0x0600, DBG_RGC); /* 1 Mb, DMR */
+            break;
+        case UINST_CNF: /* 0x2296 (get configuration switches) - VMS Driver uses this  */
+            sim_debug(DBG_TRC, controller->device, "%s%d: dmc_check_romi(). report config\n", controller->device->name, controller->index);
+            dmc_setreg (controller, 6, 0x0006, DBG_RGC); /* 1 Mb, DMR */
+            break;
+        default:
+            if ((*controller->csrs->sel6 & 0xff00) == UINST_RROM) {
+                /* Read ROM: VMS and RSTS do this */
+                sim_debug(DBG_TRC, controller->device, "%s%d: dmc_check_romi(). read rom[0x%02x]\n", controller->device->name, controller->index, *controller->csrs->sel6 & 0xff);
+                dmc_setreg (controller, 6,
+                            hi_speed_ucode[*controller->csrs->sel6 & 0xff],
+                            DBG_RGC);
+                }
+            else
+                sim_debug(DBG_WRN, controller->device, "%s%d: dmc_check_romi(). Unknown Microcode instruction 0x%04x\n", controller->device->name, controller->index, *controller->csrs->sel6);
+            break;
+        }
+    /* If it was a STEP we do this only once. */
+    *controller->csrs->sel0 &= ~DMC_SEL0_M_STEPUP;
+    controller->transfer_state = Idle;
+    }
+}
+
+void dmc_process_immediate(CTLR *controller)
 {
 if (dmc_is_master_clear_set(controller)) {
     dmc_process_master_clear(controller);
     return;
     }
+    dmc_check_romi(controller);             /* Do any needed immediate actions */
+}
+
+void dmc_process_command(CTLR *controller)
+{
 if (controller->transfer_state == InputTransfer) {
     dmc_process_input_transfer_completion(controller);
     return;
@@ -3507,32 +3685,8 @@ if (dmc_is_rqi_set(controller)) {
     dmc_start_input_transfer(controller);
     return;
     }
-if (dmc_is_dmc (controller) &&
-    (*controller->csrs->sel0 & DMC_SEL0_M_ROMI) &&
-    (!dmc_is_run_set(controller)) &&
-    (*controller->csrs->sel0 & DMC_SEL0_M_STEPUP)) {
-    /* DMC-11 or DMR-11, with RUN off and step and ROMI bits set.  */
-    switch (*controller->csrs->sel6) {
-        case DSPDSR:    /* 0x22b3 (read line status instruction), set the DTR bit in SEL2.  */
-            dmc_setreg (controller, 2, 0x800, DBG_RGC);
-            break;
-        case DROPDTR:   /* 0xa40b (drop DTR instruction) - VMS Driver uses this  */
-            dmc_clr_modem_dtr (controller);
-            break;
-        case UINST_CNF: /* 0x2296 (get configuration switches) - VMS Driver uses this  */
-            dmc_setreg (controller, 6, 0x0006, DBG_RGC);
-            break;
-        case UINST_RROM:/* 0x814d (read DMC ROM) - VMS Driver uses this  */
-            dmc_setreg (controller, 6, 0x0391, DBG_RGC); /* Not Low Speed uCode value (0x390) */
-            break;
-        default:
-            sim_debug(DBG_WRN, controller->device, "%s%d: dmc_process_command(). Unknown Microcode instruction 0x%04x", controller->device->name, controller->index, *controller->csrs->sel6);
-            break;
-        }
-    *controller->csrs->sel0 &= ~DMC_SEL0_M_STEPUP;
-    controller->transfer_state = Idle;
-    }
-else {
+if (!dmc_is_dmc (controller) ||
+    (*controller->csrs->sel0 & DMC_SEL0_M_ROMI) == 0) {
     if (dmc_is_run_set(controller)) {
         dmc_start_control_output_transfer(controller);
         dmc_start_transfer_buffer(controller);
@@ -3592,6 +3746,8 @@ else {
     dmc_setreg(controller, PA, (oldValue & ~mask) | (data & mask), DBG_REG);
     }
 
+if (dmc_getsel(reg) == 0)    /* writes to SEL0 may need immediate action */
+    dmc_process_immediate(controller);      /* Do any needed immediate actions */
 if ((dmc_getsel(reg) == 0) || (dmc_getsel(reg) == 1)) {/* writes to SEL0 and SEL2 are actionable */
     if (0 == controller->dmc_wr_delay) {    /* Not waiting? */
         controller->dmc_wr_delay = 10;      /* Wait a bit before acting on the changed register */
@@ -3802,7 +3958,7 @@ if (!(dptr->flags & DEV_DIS)) {
 return ans;
 }
 
-t_stat dmc_attach (UNIT *uptr, char *cptr)
+t_stat dmc_attach (UNIT *uptr, CONST char *cptr)
 {
 DEVICE *dptr = (UNIBUS) ? ((&dmc_dev == find_dev_from_unit(uptr)) ? &dmc_dev : &dmp_dev) : &dmv_dev;
 int32 dmc = (int32)(uptr-dptr->units);
@@ -3824,7 +3980,7 @@ sprintf (attach_string, "Line=%d,Connect=%s,%s", dmc, peer, cptr);
 ans = tmxr_open_master (mp, attach_string);                 /* open master socket */
 if (ans != SCPE_OK)
     return ans;
-strncpy (port, cptr, CBUFSIZE-1);
+strncpy (port, cptr, sizeof(dmc_port[0]));
 uptr->filename = (char *)malloc (strlen(port)+1);
 strcpy (uptr->filename, port);
 uptr->flags |= UNIT_ATT;
@@ -3858,7 +4014,7 @@ uptr->filename = NULL;
 return r;
 }
 
-char *dmc_description (DEVICE *dptr)
+const char *dmc_description (DEVICE *dptr)
 {
 #if defined (VM_PDP10)
 return "DMR11 Synchronous network controller";
@@ -3867,7 +4023,7 @@ return "DMC11 Synchronous network controller";
 #endif
 }
 
-char *dmp_description (DEVICE *dptr)
+const char *dmp_description (DEVICE *dptr)
 {
 return (UNIBUS) ? "DMP11 Synchronous network controller"
                 : "DMV11 Synchronous network controller";

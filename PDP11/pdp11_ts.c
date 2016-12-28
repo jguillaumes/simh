@@ -282,15 +282,14 @@ int32 ts_ownc = 0;                                      /* tape owns cmd */
 int32 ts_ownm = 0;                                      /* tape owns msg */
 int32 ts_qatn = 0;                                      /* queued attn */
 int32 ts_bcmd = 0;                                      /* boot cmd */
-int32 ts_time = 10;                                     /* record latency */
+int32 ts_time = 2000;                                   /* record latency */
 static uint16 cpy_buf[MAX_PLNT];                        /* copy buffer */
 
-DEVICE ts_dev;
 t_stat ts_rd (int32 *data, int32 PA, int32 access);
 t_stat ts_wr (int32 data, int32 PA, int32 access);
 t_stat ts_svc (UNIT *uptr);
 t_stat ts_reset (DEVICE *dptr);
-t_stat ts_attach (UNIT *uptr, char *cptr);
+t_stat ts_attach (UNIT *uptr, CONST char *cptr);
 t_stat ts_detach (UNIT *uptr);
 t_stat ts_boot (int32 unitno, DEVICE *dptr);
 int32 ts_updtssr (int32 t);
@@ -298,8 +297,8 @@ int32 ts_updxs0 (int32 t);
 void ts_cmpendcmd (int32 s0, int32 s1);
 void ts_endcmd (int32 ssf, int32 xs0f, int32 msg);
 int32 ts_map_status (t_stat st);
-t_stat ts_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr);
-char *ts_description (DEVICE *dptr);
+t_stat ts_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
+const char *ts_description (DEVICE *dptr);
 
 /* TS data structures
 
@@ -361,8 +360,8 @@ MTAB ts_mod[] = {
         &sim_tape_set_capac, &sim_tape_show_capac, NULL, "Set/Display capacity" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 004,     "ADDRESS", "ADDRESS",
         &set_addr, &show_addr, NULL, "Bus address" },
-    { MTAB_XTD|MTAB_VDV, 0,                 "VECTOR", NULL,
-        NULL, &show_vec, NULL, "Interrupt vector" },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0,       "VECTOR", "VECTOR",
+        &set_vec, &show_vec, NULL, "Interrupt vector" },
     { 0 }
     };
 
@@ -1081,11 +1080,11 @@ return auto_config (0, 0);
 
 /* Attach */
 
-t_stat ts_attach (UNIT *uptr, char *cptr)
+t_stat ts_attach (UNIT *uptr, CONST char *cptr)
 {
 t_stat r;
 
-r = sim_tape_attach (uptr, cptr);                       /* attach unit */
+r = sim_tape_attach_ex (uptr, cptr, DBG_TAP, 0);        /* attach unit */
 if (r != SCPE_OK)                                       /* error? */
     return r;
 tssr = tssr & ~TSSR_OFL;                                /* clr offline */
@@ -1191,7 +1190,7 @@ return SCPE_NOFNC;
 }
 #endif
 
-t_stat ts_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr)
+t_stat ts_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
 fprintf (st, "TS11 Magnetic Tape (TS)\n\n");
 fprint_set_help (st, dptr);
@@ -1212,7 +1211,7 @@ sim_tape_attach_help (st, dptr, uptr, flag, cptr);
 return SCPE_OK;
 }
 
-char *ts_description (DEVICE *dptr)
+const char *ts_description (DEVICE *dptr)
 {
 return (UNIBUS) ? "TS11 magnetic tape controller" :
                   "TSV11/TSV05 magnetic tape controller ";

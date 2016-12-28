@@ -34,11 +34,11 @@
 #include "sim_defs.h"
 #include <setjmp.h>
 
-#if defined (__GNUC__)
-#define INLINE inline
-#else
 #define INLINE
-#endif
+
+/* Rename of global PC variable to avoid namespace conflicts on some platforms */
+
+#define PC PC_Global
 
 /* Configuration */
 

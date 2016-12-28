@@ -1,6 +1,6 @@
 /* hp2100_sys.c: HP 2100 simulator interface
 
-   Copyright (c) 1993-2013, Robert M. Supnik
+   Copyright (c) 1993-2016, Robert M. Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -23,6 +23,11 @@
    used in advertising or otherwise to promote the sale, use or other dealings
    in this Software without prior written authorization from Robert M Supnik.
 
+   13-May-16    JDB     Modified for revised SCP API function parameter types
+   19-Jun-15    JDB     Conditionally use Fprintf function for version 4.x and on
+   18-Jun-15    JDB     Added cast to int for isspace parameter
+   24-Dec-14    JDB     Added casts to t_addr and t_value for 64-bit compatibility
+                        Made local routines static
    05-Feb-13    JDB     Added hp_fprint_stopped to handle HLT instruction message
    18-Mar-13    JDB     Moved CPU state variable declarations to hp2100_cpu.h
    09-May-12    JDB     Quieted warnings for assignments in conditional expressions
@@ -59,9 +64,17 @@
    27-Oct-98    RMS     V2.4 load interface
 */
 
+
+#include <ctype.h>
 #include "hp2100_defs.h"
 #include "hp2100_cpu.h"
-#include <ctype.h>
+
+
+#if (SIM_MAJOR >= 4)
+  #define fprintf       Fprintf
+  #define fputs(_s,_f)  Fprintf (_f, "%s", _s)
+  #define fputc(_c,_f)  Fprintf (_f, "%c", _c)
+#endif
 
 
 extern DEVICE mp_dev;
@@ -186,7 +199,7 @@ return TRUE;
    The checksum includes the origin but not the count.
 */
 
-int32 fgetw (FILE *fileref)
+static int32 fgetw (FILE *fileref)
 {
 int c1, c2;
 
@@ -195,7 +208,7 @@ if ((c2 = fgetc (fileref)) == EOF) return -1;
 return ((c1 & 0377) << 8) | (c2 & 0377);
 }
 
-t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int flag)
+t_stat sim_load (FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
 {
 int32 origin, csum, zerocnt, count, word, i;
 
@@ -435,7 +448,7 @@ int32 cflag, cm, i, j, inst, disp;
 uint32 irq;
 
 cflag = (uptr == NULL) || (uptr == &cpu_unit);
-inst = val[0];
+inst = (int32) val[0];
 if (sw & SWMASK ('A')) {                                /* ASCII? */
     if (inst > 0377) return SCPE_ARG;
     fprintf (of, FMTASC (inst & 0177));
@@ -460,7 +473,7 @@ if (sw & SIM_SW_STOP) {                                 /* simulator stop? */
 
     if (irq && (!ion_defer || !calc_defer())) {         /* pending interrupt and not deferred? */
         addr = irq;                                     /* set display address to trap cell */
-        inst = val[0] = ReadIO (irq, SMAP);             /* load trap cell instruction */
+        val[0] = inst = ReadIO (irq, SMAP);             /* load trap cell instruction */
         val[1] = ReadIO (irq + 1, SMAP);                /*   might be multi-word */
         val[2] = ReadIO (irq + 2, SMAP);                /*   although it's unlikely */
         fprintf (of, "IAK %2o: ", irq);                 /* report acknowledged interrupt */
@@ -485,8 +498,10 @@ for (i = 0; opc_val[i] >= 0; i++) {                     /* loop thru ops */
             disp = inst & I_DISP;                       /* displacement */
             fprintf (of, "%s ", opcode[i]);             /* opcode */
             if (inst & I_CP) {                          /* current page? */
-                if (cflag) fprintf (of, "%-o", (addr & I_PAGENO) | disp);
-                else fprintf (of, "C %-o", disp);
+                if (cflag)
+                    fprintf (of, "%-o", ((uint32) addr & I_PAGENO) | disp);
+                else
+                    fprintf (of, "C %-o", disp);
                 }
             else fprintf (of, "%-o", disp);             /* page zero */
             if (inst & I_IA) fprintf (of, ",I");
@@ -512,7 +527,7 @@ for (i = 0; opc_val[i] >= 0; i++) {                     /* loop thru ops */
             break;
 
         case I_V_EMR:                                   /* extended mem ref */
-            fprintf (of, "%s %-o", opcode[i], val[1] & VAMASK);
+            fprintf (of, "%s %-o", opcode[i], (uint32) val[1] & VAMASK);
             if (val[1] & I_IA) fprintf (of, ",I");
             return -1;                                  /* extra word */
 
@@ -526,14 +541,14 @@ for (i = 0; opc_val[i] >= 0; i++) {                     /* loop thru ops */
             break;
 
         case I_V_EGZ:                                   /* ext grp 1 op + 0 */
-            fprintf (of, "%s %-o", opcode[i], val[1] & VAMASK);
+            fprintf (of, "%s %-o", opcode[i], (uint32) val[1] & VAMASK);
             if (val[1] & I_IA) fprintf (of, ",I");
             return -2;                                  /* extra words */
 
         case I_V_EG2:                                   /* ext grp 2 op */
-            fprintf (of, "%s %-o", opcode[i], val[1] & VAMASK);
+            fprintf (of, "%s %-o", opcode[i], (uint32) val[1] & VAMASK);
             if (val[1] & I_IA) fprintf (of, ",I");
-            fprintf (of, " %-o", val[2] & VAMASK);
+            fprintf (of, " %-o", (uint32) val[2] & VAMASK);
             if (val[2] & I_IA) fprintf (of, ",I");
             return -2;                                  /* extra words */
 
@@ -569,14 +584,14 @@ return SCPE_ARG;
                         -1 if error
 */
 
-int32 get_addr (char *cptr)
+static int32 get_addr (CONST char *cptr)
 {
 int32 d;
 t_stat r;
 char gbuf[CBUFSIZE];
 
 cptr = get_glyph (cptr, gbuf, ',');                     /* get next field */
-d = get_uint (gbuf, 8, VAMASK, &r);                     /* construe as addr */
+d = (int32) get_uint (gbuf, 8, VAMASK, &r);             /* construe as addr */
 if (r != SCPE_OK) return -1;
 if (*cptr != 0) {                                       /* more? */
     cptr = get_glyph (cptr, gbuf, 0);                   /* look for indirect */
@@ -599,14 +614,15 @@ return d;
         status  =       error status
 */
 
-t_stat parse_sym (char *iptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
+t_stat parse_sym (CONST char *iptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
 int32 cflag, d, i, j, k, clef, tbits;
 t_stat r, ret;
-char *cptr, gbuf[CBUFSIZE];
+CONST char *cptr;
+char gbuf[CBUFSIZE];
 
 cflag = (uptr == NULL) || (uptr == &cpu_unit);
-while (isspace (*iptr)) iptr++;                         /* absorb spaces */
+while (isspace ((int) *iptr)) iptr++;                   /* absorb spaces */
 if ((sw & SWMASK ('A')) || ((*iptr == '\'') && iptr++)) { /* ASCII char? */
     if (iptr[0] == 0) return SCPE_ARG;                  /* must have 1 char */
     val[0] = (t_value) iptr[0] & 0177;
@@ -640,12 +656,15 @@ if (opcode[i]) {                                        /* found opcode? */
 
     case I_V_MRF:                                       /* mem ref */
         cptr = get_glyph (cptr, gbuf, 0);               /* get next field */
-        if ((k = (strcmp (gbuf, "C") == 0))) {          /* C specified? */
+        k = strcmp (gbuf, "C");
+        if (k == 0) {                                   /* C specified? */
             val[0] = val[0] | I_CP;
             cptr = get_glyph (cptr, gbuf, 0);
             }
-        else if ((k = (strcmp (gbuf, "Z") == 0))) {     /* Z specified? */
-            cptr = get_glyph (cptr, gbuf, ',');
+        else {
+            k = strcmp (gbuf, "Z");
+            if (k == 0)                                 /* Z specified? */
+                cptr = get_glyph (cptr, gbuf, ',');
             }
         if ((d = get_addr (gbuf)) < 0) return SCPE_ARG;
         if ((d & VAMASK) <= I_DISP) val[0] = val[0] | d;
@@ -656,7 +675,7 @@ if (opcode[i]) {                                        /* found opcode? */
 
     case I_V_ESH:                                       /* extended shift */
         cptr = get_glyph (cptr, gbuf, 0);
-        d = get_uint (gbuf, 10, 16, &r);
+        d = (int32) get_uint (gbuf, 10, 16, &r);
         if ((r != SCPE_OK) || (d == 0)) return SCPE_ARG;
         val[0] = val[0] | (d & 017);
         break;
@@ -670,7 +689,7 @@ if (opcode[i]) {                                        /* found opcode? */
 
     case I_V_IO1:                                       /* IOT + optional C */
         cptr = get_glyph (cptr, gbuf, ',');             /* get device */
-        d = get_uint (gbuf, 8, I_DEVMASK, &r);
+        d = (int32) get_uint (gbuf, 8, I_DEVMASK, &r);
         if (r != SCPE_OK) return SCPE_ARG;
         val[0] = val[0] | d;
         if (*cptr != 0) {
@@ -682,7 +701,7 @@ if (opcode[i]) {                                        /* found opcode? */
 
     case I_V_IO2:                                       /* IOT */
         cptr = get_glyph (cptr, gbuf, 0);               /* get device */
-        d = get_uint (gbuf, 8, I_DEVMASK, &r);
+        d = (int32) get_uint (gbuf, 8, I_DEVMASK, &r);
         if (r != SCPE_OK) return SCPE_ARG;
         val[0] = val[0] | d;
         break;
@@ -807,7 +826,7 @@ else {                                                  /* printable character *
 
 /* Set select code */
 
-t_stat hp_setsc (UNIT *uptr, int32 num, char *cptr, void *desc)
+t_stat hp_setsc (UNIT *uptr, int32 num, CONST char *cptr, void *desc)
 {
 DEVICE *dptr = (DEVICE *) desc;
 DIB *dibptr;
@@ -825,7 +844,7 @@ dibptr = (DIB *) dptr->ctxt;
 if (dibptr == NULL)
     return SCPE_IERR;
 
-newdev = get_uint (cptr, 8, I_DEVMASK - num, &r);
+newdev = (int32) get_uint (cptr, 8, I_DEVMASK - num, &r);
 
 if (r != SCPE_OK)
     return r;
@@ -842,9 +861,9 @@ return SCPE_OK;
 
 /* Show select code */
 
-t_stat hp_showsc (FILE *st, UNIT *uptr, int32 num, void *desc)
+t_stat hp_showsc (FILE *st, UNIT *uptr, int32 num, CONST void *desc)
 {
-DEVICE *dptr = (DEVICE *) desc;
+const DEVICE *dptr = (const DEVICE *) desc;
 DIB *dibptr;
 int32 i;
 
@@ -867,7 +886,7 @@ return SCPE_OK;
 
 /* Set device number */
 
-t_stat hp_setdev (UNIT *uptr, int32 num, char *cptr, void *desc)
+t_stat hp_setdev (UNIT *uptr, int32 num, CONST char *cptr, void *desc)
 {
 return hp_setsc (uptr, num, cptr, desc);
 }
@@ -875,7 +894,7 @@ return hp_setsc (uptr, num, cptr, desc);
 
 /* Show device number */
 
-t_stat hp_showdev (FILE *st, UNIT *uptr, int32 num, void *desc)
+t_stat hp_showdev (FILE *st, UNIT *uptr, int32 num, CONST void *desc)
 {
 t_stat result;
 

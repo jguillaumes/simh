@@ -68,11 +68,6 @@
 #define CLK_DELAY       5000                            /* 100 Hz */
 #define TMXR_MULT       1                               /* 100 Hz */
 
-extern int32 int_req[IPL_HLVL];
-extern int32 hlt_pin;
-extern jmp_buf save_env;
-extern int32 p1;
-
 int32 tti_csr = 0;                                      /* control/status */
 uint32 tti_buftime;                                     /* time input character arrived */
 int32 tto_csr = 0;                                      /* control/status */
@@ -88,11 +83,11 @@ t_stat clk_svc (UNIT *uptr);
 t_stat tti_reset (DEVICE *dptr);
 t_stat tto_reset (DEVICE *dptr);
 t_stat clk_reset (DEVICE *dptr);
-char *tti_description (DEVICE *dptr);
-char *tto_description (DEVICE *dptr);
-char *clk_description (DEVICE *dptr);
-t_stat tti_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr);
-t_stat tto_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr);
+const char *tti_description (DEVICE *dptr);
+const char *tto_description (DEVICE *dptr);
+const char *clk_description (DEVICE *dptr);
+t_stat tti_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
+t_stat tto_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 void txdb_func (int32 data);
 
 extern int32 sysd_hlt_enb (void);
@@ -107,7 +102,7 @@ extern int32 con_halt (int32 code, int32 cc);
 
 DIB tti_dib = { 0, 0, NULL, NULL, 1, IVCL (TTI), SCB_TTI, { NULL } };
 
-UNIT tti_unit = { UDATA (&tti_svc, UNIT_IDLE|TT_MODE_8B, 0), SERIAL_IN_WAIT };
+UNIT tti_unit = { UDATA (&tti_svc, UNIT_IDLE|TT_MODE_8B, 0), TMLN_SPD_9600_BPS };
 
 REG tti_reg[] = {
     { HRDATAD (BUF,     tti_unit.buf,         16, "last data item processed") },
@@ -239,7 +234,7 @@ if (tti_csr & CSR_DONE) {                               /* Input pending ? */
     tti_csr = tti_csr & ~CSR_DONE;                      /* clr done */
     tti_unit.buf = tti_unit.buf & 0377;                 /* clr errors */
     CLR_INT (TTI);
-    sim_activate_abs (&tti_unit, tti_unit.wait);        /* check soon for more input */
+    sim_activate_after_abs (&tti_unit, tti_unit.wait);  /* check soon for more input */
     }
 return t;
 }
@@ -253,6 +248,8 @@ void iccs_wr (int32 data)
 {
 if ((data & CSR_IE) == 0)
     CLR_INT (CLK);
+if (data & CSR_DONE)                                    /* Interrupt Acked? */
+    sim_rtcn_tick_ack (20, TMR_CLK);                    /* Let timers know */
 clk_csr = (clk_csr & ~CLKCSR_RW) | (data & CLKCSR_RW);
 return;
 }
@@ -319,7 +316,7 @@ else
 
 }
 
-t_stat cpu_show_leds (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat cpu_show_leds (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 fprintf (st, "leds=%d(%s,%s,%s)", tto_leds, tto_leds&4 ? "ON" : "OFF", 
                                             tto_leds&2 ? "ON" : "OFF", 
@@ -337,8 +334,8 @@ t_stat tti_svc (UNIT *uptr)
 {
 int32 c;
 
-sim_clock_coschedule (uptr, KBD_WAIT (uptr->wait, tmr_poll));
-                                                        /* continue poll */
+sim_clock_coschedule (uptr, tmxr_poll);                 /* continue poll */
+
 if ((tti_csr & CSR_DONE) &&                             /* input still pending and < 500ms? */
     ((sim_os_msec () - tti_buftime) < 500))
      return SCPE_OK;
@@ -368,7 +365,7 @@ sim_activate_abs (&tti_unit, KBD_WAIT (tti_unit.wait, tmr_poll));
 return SCPE_OK;
 }
 
-t_stat tti_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr)
+t_stat tti_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
 fprintf (st, "Console Terminal Input (TTI)\n\n");
 fprintf (st, "The terminal input (TTI) polls the console keyboard for input.\n\n");
@@ -378,7 +375,7 @@ fprint_reg_help (st, dptr);
 return SCPE_OK;
 }
 
-char *tti_description (DEVICE *dptr)
+const char *tti_description (DEVICE *dptr)
 {
 return "console terminal input";
 }
@@ -417,7 +414,7 @@ sim_cancel (&tto_unit);                                 /* deactivate unit */
 return SCPE_OK;
 }
 
-t_stat tto_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, char *cptr)
+t_stat tto_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
 fprintf (st, "Console Terminal Output (TTO)\n\n");
 fprintf (st, "The terminal output (TTO) writes to the simulator console.\n\n");
@@ -427,7 +424,7 @@ fprint_reg_help (st, dptr);
 return SCPE_OK;
 }
 
-char *tto_description (DEVICE *dptr)
+const char *tto_description (DEVICE *dptr)
 {
 return "console terminal output";
 }
@@ -458,17 +455,16 @@ t_stat clk_reset (DEVICE *dptr)
 {
 int32 t;
 
-sim_register_clock_unit (&clk_unit);                    /* declare clock unit */
 clk_csr = 0;
 CLR_INT (CLK);
-t = sim_rtcn_init (clk_unit.wait, TMR_CLK);             /* init timer */
-sim_activate_abs (&clk_unit, t);                        /* activate unit */
+t = sim_rtcn_init_unit (&clk_unit, clk_unit.wait, TMR_CLK);/* init 100Hz timer */
+sim_activate_after (&clk_unit, 1000000/clk_tps);        /* activate 100Hz unit */
 tmr_poll = t;                                           /* set tmr poll */
 tmxr_poll = t * TMXR_MULT;                              /* set mux poll */
 return SCPE_OK;
 }
 
-char *clk_description (DEVICE *dptr)
+const char *clk_description (DEVICE *dptr)
 {
 return "100hz clock tick";
 }

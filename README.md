@@ -4,6 +4,8 @@
 
 ### New Simulators
 
+#### Leonid Broukhis and Serge Vakulenko have implemented a simulator for the Soviet mainframe BESM-6 computer.
+
 #### Matt Burke has implemented new VAX model simulators:
     VAX/11 730
     VAX/11 750
@@ -16,6 +18,10 @@
 
 #### Gerardo Ospina has implemented a Manchester University SSEM (Small Scale Experimental Machine) simulator.
 
+#### Richard Cornwell has implemented a Burroughs B5500 simulator.
+
+#### Dave Bryan has implemented an HP-3000 Series III simulator.
+
 #### Updated AltairZ80 simulator from Peter Schorn.
 
 #### Updated HP2100 simulator from Dave Bryan.
@@ -24,7 +30,15 @@
 
 #### Beta SAGE-II and PDQ-3 simulators from Holger Veit
 
+#### Intel Systems 8010 and 8020 simulators from Bill Beech
+
+#### CDC 1700 simulator from John Forecast
+
 ### New Host Platform support - HP-UX and AIX
+
+### Simulator Front Panel API
+
+The sim_frontpanel API provides a programatic interface to start and control any simulator without any special additions to the simulator code.
 
 ### New Functionality
 
@@ -53,12 +67,18 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
         Qbus systems 128 port limit (default of 16).
     DZ devices optionally support full modem control (and port speed settings 
         when connected to serial ports).
+    TU58 device support for all PDP11 and VAX systems.
     DHU11 (device VH) on Unibus systems now has 16 ports per multiplexer.
     XQ devices (DEQNA, DELQA and DELQA-T) are bootable on Qbus PDP11 simulators
     XQ and XU devices (DEQNA, DELQA, DELQA-T, DEUNA and DELQA) devices can now 
         directly communicate to a remote device via UDP (i.e. a built-in HECnet bridge).
+    XQ and XU devices (DEQNA, DELQA, DELQA-T, DEUNA and DELQA) devices can now 
+        optionally throttle outgoing packets which is useful when communicating with
+        legacy systems (real hardware) on a local LAN which can easily get over run 
+        when packets arrive too fast.
+    MicroVAX 3900 has QVSS (VCB01) board available.
     MicroVAX 3900 and MicroVAX II have SET CPU AUTOBOOT option
-    MicroVAX 3900 has a SET CPU MODEL=(MicroVAX|VAXServer) command to change between system types
+    MicroVAX 3900 has a SET CPU MODEL=(MicroVAX|VAXServer|VAXStation) command to change between system types
     MicroVAX I has a SET CPU MODEL=(MicroVAX|VAXSTATION) command to change between system types
     MicroVAX II has a SET CPU MODEL=(MicroVAX|VAXSTATION) command to change between system types
 
@@ -86,6 +106,12 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
     Separate TCP listening ports per line
     Outgoing connections per line (virtual Null Modem cable).
     Packet sending and reception semantics for simulated network device support using either TCP or UDP transport.
+    Input character rates reflect the natural character arrival time based on the line speed.
+
+#### Video Display Capabilities
+Added support for monochrome displays with optional keyboards and mice.  
+The VAXstation QVSS device (VCB01) simulation uses this capability.
+Host platforms which have libSDL available can leverage this functionality.
 
 #### Asynchronous I/O
     * Disk and Tape I/O can be asynchronous.  Asynchronous support exists 
@@ -95,9 +121,38 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
       Asynchronous support exists for console I/O and most multiplexer 
       devices.  (Still experimental - not currently by default)
 
+#### Clock/Timer Enhancements
+    * Asynchronhous clocks ticks exist to better support modern processors 
+      that have variable clock speeds.  The initial clock calibration model 
+      presumed a constant simulated instruction execution rate.  
+      Modern processors have variable processor speeds which breaks this 
+      key assumption.  
+    * Strategies to make up for missed clock ticks are now available
+      (independent of asynchronous tick generation).  These strategies
+      generate catch-up clock ticks to keep the simulator passage of 
+      time consistent with wall clock time.  Simulator time while idling 
+      or throttling is now consistent.  Reasonable idling behavior is 
+      now possible without requiring that the host system clock tick be
+      10ms or less.
+
+#### Ethernet Transport Enhancements
+	* UDP packet transport.  Direct simulator connections to HECnet can be 
+	  made without running a local packet bridge program.
+	* NAT packet transport.  Simulators which only speak TCP/IP (No DECnet)
+	  and want to communicate with their host systems and/or directly to 
+	  the Internet can use NAT packet transport.  This also works for WiFi 
+	  connected host systems.
+	* Packet Transmission Throttling.  When connected to a LAN which has 
+	  legacy network adapaters (DEQNA, DEUNA) on legacy systems, it is very
+	  easy for a simulated system to overrun the receiving capacity of the
+	  older systems.  Throttling of simulated traffic delivered to the LAN 
+	  can be used to mitigate this problem.
+	* Reliable MAC address conflict detection.  
+	* Automatic unique default MAC address assignment.  
+
 #### Disk Extensions
     RAW Disk Access (including CDROM)
-    Virtual Disk Container files, including differincing disks
+    Virtual Disk Container files, including differencing disks
 
 #### Embedded ROM support
     Simulators which have boot commands which load constant files as part of 
@@ -105,9 +160,9 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
     imbedded files are used if the normal boot file isn't found when the 
     simulator boots.  Specific examples are:  VAX (MicroVAX 3900 - ka655x.bin), 
     VAX8600 (VAX 8600 - vmb.exe), VAX780 (VAX 11/780 - vmb.exe), 
-    VAX750 (VAX 11/750 - vmb.exe), VAX730 (VAX 11/730 - vmb.exe), 
-    VAX610 (MicroVAX I - ka610.bin), VAX620 (rtVAX 1000 - ka620.bin), 
-    VAX630 (MicroVAX II - ka630.bin)
+    VAX750 (VAX 11/750 - vmb.exe, ka750_old.bin, ka750_new.bin), 
+    VAX730 (VAX 11/730 - vmb.exe), VAX610 (MicroVAX I - ka610.bin), 
+    VAX620 (rtVAX 1000 - ka620.bin), VAX630 (MicroVAX II - ka630.bin)
 
 #### Control Flow
 
@@ -160,11 +215,16 @@ Error traps can be taken for any command which returns a status other than SCPE_
 ON Traps can specify any status value from the following list: NXM, UNATT, IOERR, CSUM, FMT, NOATT, OPENERR, MEM, ARG, STEP, UNK, RO, INCOMP, STOP, TTIERR, TTOERR, EOF, REL, NOPARAM, ALATT, TIMER, SIGERR, TTYERR, SUB, NOFNC, UDIS, NORO, INVSW, MISVAL, 2FARG, 2MARG, NXDEV, NXUN, NXREG, NXPAR, NEST, IERR, MTRLNT, LOST, TTMO, STALL, AFAIL.  These values can be indicated by name or by their internal numeric value (not recommended).
 
 Interactions with ASSERT command and "DO -e":
-DO -e		is equivalent to SET ON, which by itself it equivalent to "SET ON; ON ERROR RETURN".
-ASSERT		failure have several different actions:
-       If error trapping is not enabled then AFAIL causes exit from the current do command file.
-       If error trapping is enabled and an explicit "ON AFAIL" action is defined, then the specified action is performed.
-       If error trapping is enabled and no "ON AFAIL" action is defined, then an AFAIL causes exit from the current do command file.
+    DO -e		is equivalent to SET ON, which by itself it equivalent 
+                to "SET ON; ON ERROR RETURN".
+    ASSERT		failure have several different actions:
+       * If error trapping is not enabled then AFAIL causes exit from 
+         the current do command file.
+       * If error trapping is enabled and an explicit "ON AFAIL" 
+         action is defined, then the specified action is performed.
+       * If error trapping is enabled and no "ON AFAIL" action is 
+         defined, then an AFAIL causes exit from the current do 
+         command file.
 
 Other related changes/extensions:
 The "!" command (execute a command on the local OS), now returns the command's exit status as the status from the "!" command.  This allows ON conditions to handle error status responses from OS commands and act as desired.
@@ -193,6 +253,7 @@ The EXPECT command now exists to provide a means of reacting to simulator output
 
 #### New SCP Commands:
 
+    SCREENSHOT filename.bmp         Save video window to the specified file
     SET ENVIRONMENT Name=Value      Set Environment variable
     SET ASYNCH                      Enable Asynchronous I/O
     SET NOASYNCH                    Disable Asynchronous I/O
@@ -233,25 +294,29 @@ The EXPECT command now exists to provide a means of reacting to simulator output
     NEXT                            Step across a subroutine call or step a single instruction.
     EXPECT                          React to output produced by a simulated system
     SEND                            Inject input to a simulated system's console
+    SCREENSHOT                      Snapshot the current video display window
+    RUN UNTIL breakpoint            Establish the breakpoiunt specified and run until it is encountered
+    RUN UNTIL "output-string" ...   Establish the specified "output-string" as an EXPECT and run until it is encountered.
+    GO UNTIL breakpoint             Establish the breakpoiunt specified and go until it is encountered
+    GO UNTILE "output-string" ...   Establish the specified "output-string" as an EXPECT and go until it is encountered.
 
 #### Command Processing Enhancements
 
 ##### Environment variable insertion
-Built In variables %DATE%, %TIME%, %DATETIME%, %LDATE%, %LTIME%, %CTIME%, %DATE_YYYY%, %DATE_YY%, %DATE_YC%, %DATE_MM%, %DATE_DD%, %DATE_D%, %DATE_WYYYY%, %DATE_WW%, %TIME_HH%, %TIME_MM%, %TIME_SS%, %STATUS%, %TSTATUS%, %SIM_VERIFY%, %SIM_QUIET%, %SIM_MESSAGE%
-Command Aliases
+Built In variables %DATE%, %TIME%, %DATETIME%, %LDATE%, %LTIME%, %CTIME%, %DATE_YYYY%, %DATE_YY%, %DATE_YC%, %DATE_MM%, %DATE_MMM%, %DATE_MONTH%, %DATE_DD%, %DATE_D%, %DATE_WYYYY%, %DATE_WW%, %TIME_HH%, %TIME_MM%, %TIME_SS%, %STATUS%, %TSTATUS%, %SIM_VERIFY%, %SIM_QUIET%, %SIM_MESSAGE%
 
    Token "%0" expands to the command file name. 
    Token %n (n being a single digit) expands to the n'th argument
-   Tonen %* expands to the whole set of arguments (%1 ... %9)
+   Token %* expands to the whole set of arguments (%1 ... %9)
 
    The input sequence "\%" represents a literal "%", and "\\" represents a
    literal "\".  All other character combinations are rendered literally.
 
    Omitted parameters result in null-string substitutions.
 
-   A Tokens preceeded and followed by % characters are expanded as environment
-   variables, and if one isn't found then can be one of several special 
-   variables: 
+   Tokens preceeded and followed by % characters are expanded as environment
+   variables, and if an environment variable isn't found then it can be one of 
+   several special variables: 
    
           %DATE%              yyyy-mm-dd
           %TIME%              hh:mm:ss
@@ -262,11 +327,17 @@ Command Aliases
           %DATE_YYYY%         yyyy        (0000-9999)
           %DATE_YY%           yy          (00-99)
           %DATE_MM%           mm          (01-12)
+          %DATE_MMM%          mmm         (JAN-DEC)
+          %DATE_MONTH%        month       (January-December)
           %DATE_DD%           dd          (01-31)
           %DATE_WW%           ww          (01-53)     ISO 8601 week number
           %DATE_WYYYY%        yyyy        (0000-9999) ISO 8601 week year number
           %DATE_D%            d           (1-7)       ISO 8601 day of week
           %DATE_JJJ%          jjj         (001-366) day of year
+          %DATE_19XX_YY%      yy          A year prior to 2000 with the same
+                                          calendar days as the current year
+          %DATE_19XX_YYYY%    yyyy        A year prior to 2000 with the same 
+                                          calendar days as the current year
           %TIME_HH%           hh          (00-23)
           %TIME_MM%           mm          (00-59)
           %TIME_SS%           ss          (00-59)
@@ -320,9 +391,32 @@ Depending on your host platform one of the following steps should be followed:
 
 If you are interested in using a simulator with Ethernet networking support (i.e. one of the VAX simulators or the PDP11), then you should make sure you have the correct networking components available.  The instructions in https://github.com/simh/simh/blob/master/0readme_ethernet.txt describe the required steps to get ethernet networking components installed and how to configure your environment.
 
-See the 0readme_ethernet.txt file for details about the required network components for your platform.  Once your operating system has the correct networking components available the following command will build working simulators:
+See the 0readme_ethernet.txt file for details about the required network components for your platform.  Once your operating system build environment has the correct networking components available the following command will build working simulators:
 
    $ make {simulator-name (i.e. vax)}
+
+The makefile provided requires GNU make, which is the default make facility for most systems these days.  Any host system which doesn't have GNU make available as the default make facility may have it installed as 'gmake'.  GNU make (gmake) is generally available an installation package for all current operating systems which have a package installation system.
+
+##### Build Dependencies
+
+Some simulators depend on external packages to provide the full scope of functionality they may be simulating.  These additional external packages may or may not be included in as part of the standard Operating System distributions.  
+
+###### OS X - Dependencies
+
+The MacPorts package manager is available to provide these external packages.  Once MacPorts is installed, these commands will install the required dependent packages:
+
+    # port install vde2
+    # port install libsdl2
+
+###### Linux - Dependencies
+
+Different Linux distributions have different package managment systems:
+
+Ubuntu:
+
+    # apt-get install libpcap-dev
+    # apt-get install vde2
+    # apt-get install libsdl2
 
 #### Windows
 
@@ -330,7 +424,7 @@ Compiling on windows is supported with recent versions of Microsoft Visual Studi
 
 ##### Required related files.  The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt
 
-##### Visual Studio (Standard or Express) 2008, 2010 or 2012
+##### Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015
 
 The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using Visual Studio.
 

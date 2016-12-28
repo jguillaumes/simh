@@ -46,11 +46,15 @@
 #define LK_MODE_NONE      2
 #define LK_MODE_DOWNUP    3
 
+static const char *lk_modes[] = {"DOWN", "AUTODOWN", "NONE", "DOWNUP"};
+
+static const char *lk_states[] = {"DOWN", "UP", "REPEAT"};
+
 /* Scan codes */
 
 typedef struct {
     int8 group;
-    int8 code;
+    uint8 code;
 } LK_KEYDATA;
 
 LK_KEYDATA LK_KEY_UNKNOWN    = { 0, 0 };
@@ -170,13 +174,13 @@ uint8 lk_rbuf[10];                                      /* receive buffer */
 int32 lk_rbuf_p = 0;                                    /* receive buffer ptr */
 int32 lk_mode[16];                                      /* mode of each key group */
 
-DEVICE lk_dev;
 t_stat lk_wr (uint8 c);
 t_stat lk_rd (uint8 *c);
 t_stat lk_reset (DEVICE *dptr);
 void lk_reset_mode (void);
 void lk_cmd (void);
 void lk_poll (void);
+const char *lk_description (DEVICE *dptr);
 
 /* LK data structures
 
@@ -188,8 +192,8 @@ void lk_poll (void);
 */
 
 DEBTAB lk_debug[] = {
-    {"SERIAL", DBG_SERIAL},
-    {"CMD",    DBG_CMD},
+    {"SERIAL", DBG_SERIAL,  "Serial port data"},
+    {"CMD",    DBG_CMD,     "Commands"},
     {0}
     };
 
@@ -209,7 +213,8 @@ DEVICE lk_dev = {
     NULL, NULL, &lk_reset,
     NULL, NULL, NULL,
     NULL, DEV_DIS | DEV_DEBUG, 0,
-    lk_debug
+    lk_debug, NULL, NULL, NULL, NULL, NULL, 
+    &lk_description
     };
 
 /* Incoming data on serial line */
@@ -220,7 +225,7 @@ sim_debug (DBG_SERIAL, &lk_dev, "vax -> lk: %02X\n", c);
 if (c == 0)
     return SCPE_OK;
 lk_rbuf[lk_rbuf_p++] = c;
-if (lk_rbuf_p == 10) {                                  /* too long? */
+if (lk_rbuf_p == sizeof(lk_rbuf)) {                     /* too long? */
     lk_rbuf_p = 0;
     LK_SEND_CHAR(0xB6);                                 /* input error */
     return SCPE_OK;
@@ -242,10 +247,10 @@ if (lk_shptr == lk_stptr) {
     }
 else {
     *c = lk_sbuf[lk_shptr++];
-    sim_debug (DBG_SERIAL, &lk_dev, "lk -> vax: %02X (%s)\n", *c,
-        (lk_shptr != lk_stptr) ? "more" : "end");
     if (lk_shptr == LK_BUF_LEN)
         lk_shptr = 0;                                   /* ring buffer wrap */
+    sim_debug (DBG_SERIAL, &lk_dev, "lk -> vax: %02X (%s)\n", *c,
+        (lk_shptr != lk_stptr) ? "more" : "end");
     return SCPE_OK;
     }
 }
@@ -304,6 +309,7 @@ if (lk_rbuf[0] & 1) {                                   /* peripheral command */
 
         case 0xA7:
             sim_debug (DBG_CMD, &lk_dev, "sound bell\n");
+            vid_beep ();
             break;
 
         case 0xC1:
@@ -363,22 +369,9 @@ if (lk_rbuf[0] & 1) {                                   /* peripheral command */
     else {
         group = (lk_rbuf[0] >> 3) & 0xF;
         if (group < 15) {
-            sim_debug (DBG_CMD, &lk_dev, "set group %d, ", group);
             mode = (lk_rbuf[0] >> 1) & 0x3;
+            sim_debug (DBG_CMD, &lk_dev, "set group %d, mode = %s\n", group, lk_modes[mode]);
             lk_mode[group] = mode;
-             switch (mode) {
-                 case LK_MODE_DOWN:
-                     sim_debug (DBG_CMD, &lk_dev, "mode = DOWN\n");
-                     break;
-
-                 case LK_MODE_AUTODOWN:
-                     sim_debug (DBG_CMD, &lk_dev, "mode = AUTODOWN\n");
-                     break;
-
-                 case LK_MODE_DOWNUP:
-                     sim_debug (DBG_CMD, &lk_dev, "mode = DOWNUP\n");
-                     break;
-                 }
             LK_SEND_CHAR (0xBA);                        /* Mode change ACK */
             }
          else
@@ -791,6 +784,8 @@ if (vid_poll_kb (&ev) != SCPE_OK)
 lk_key = lk_map_key (ev.key);
 mode  = lk_mode[lk_key.group];
 
+sim_debug (DBG_SERIAL, &lk_dev, "lk_poll() Event - Key: (group=%d, code=%02X), Mode: %s - auto-repeat inhibit: %s - state: %s\n", lk_key.group, lk_key.code, lk_modes[mode], lk_trpti ? "TRUE" : "FALSE", lk_states[ev.state]);
+
 if (lk_trpti && (ev.state != SIM_KEYPRESS_REPEAT))
     lk_trpti = FALSE;
 
@@ -829,4 +824,11 @@ switch (mode) {
     }            
 }
 
-#endif /* !VAX_620 */
+const char *lk_description (DEVICE *dptr)
+{
+return "  VCB01 - LK Keyboard interface";
+}
+
+#else /* defined(VAX_620) */
+static const char *dummy_declaration = "Something to compile";
+#endif /* !defined(VAX_620) */

@@ -106,28 +106,28 @@
     T = Sector True, is a 0 when the sector is positioned to read or
             write.
 
-	----------------------------------------------------------
+    ----------------------------------------------------------
 
-	5/22/2014 - Updated by Mike Douglas to support the Altair Minidisk.
-				This disk uses 35 (vs 70) tracks of 16 (vs 32) sectors 
-				of 137 bytes each.
+    5/22/2014 - Updated by Mike Douglas to support the Altair Minidisk.
+                This disk uses 35 (vs 70) tracks of 16 (vs 32) sectors 
+                of 137 bytes each.
 
-	6/30/2014 - When the disk is an Altair Minidisk, load the head as 
-				soon as the disk is enabled, and ignore the head
-				unload command (both like the real hardware). 
+    6/30/2014 - When the disk is an Altair Minidisk, load the head as 
+                soon as the disk is enabled, and ignore the head
+                unload command (both like the real hardware). 
 
-	7/13/2014 - This code previously returned zero when the sector position
-				register was read with the head not loaded. This zero looks
-				like an asserted "Sector True" flag for sector zero. The real
-				hardware returns 0xff in this case. The same problem occurs
-				when the drive is deselected - the sector position register
-				returned zero instead of 0xff. These have been corrected.
+    7/13/2014 - This code previously returned zero when the sector position
+                register was read with the head not loaded. This zero looks
+                like an asserted "Sector True" flag for sector zero. The real
+                hardware returns 0xff in this case. The same problem occurs
+                when the drive is deselected - the sector position register
+                returned zero instead of 0xff. These have been corrected.
 
-	7/13/2014	Some software for the Altair skips a sector by verifying
-				that "Sector True" goes false. Previously, this code
-				returned "Sector True" every time the sector register 
-				was read. Now the flag alternates true and false on
-				subsequent reads of the sector register. 
+    7/13/2014   Some software for the Altair skips a sector by verifying
+                that "Sector True" goes false. Previously, this code
+                returned "Sector True" every time the sector register 
+                was read. Now the flag alternates true and false on
+                subsequent reads of the sector register. 
 */
 
 #include "altairz80_defs.h"
@@ -153,9 +153,9 @@
 #define NUM_OF_DSK_MASK     (NUM_OF_DSK - 1)
 #define BOOTROM_SIZE_DSK    256                     /* size of boot rom                         */
 
-#define	MINI_DISK_SECT		16						/* mini disk sectors per track              */
-#define	MINI_DISK_TRACKS	35						/* number of tracks on mini disk            */
-#define	MINI_DISK_SIZE		(MINI_DISK_TRACKS * MINI_DISK_SECT * DSK_SECTSIZE)
+#define MINI_DISK_SECT      16                      /* mini disk sectors per track              */
+#define MINI_DISK_TRACKS    35                      /* number of tracks on mini disk            */
+#define MINI_DISK_SIZE      (MINI_DISK_TRACKS * MINI_DISK_SECT * DSK_SECTSIZE)
 #define MINI_DISK_DELTA     4096                    /* threshold for detecting mini disks       */
 
 int32 dsk10(const int32 port, const int32 io, const int32 data);
@@ -163,7 +163,8 @@ int32 dsk11(const int32 port, const int32 io, const int32 data);
 int32 dsk12(const int32 port, const int32 io, const int32 data);
 static t_stat dsk_boot(int32 unitno, DEVICE *dptr);
 static t_stat dsk_reset(DEVICE *dptr);
-static t_stat dsk_attach(UNIT *uptr, char *cptr);
+static t_stat dsk_attach(UNIT *uptr, CONST char *cptr);
+static const char* dsk_description(DEVICE *dptr);
 
 extern UNIT cpu_unit;
 extern uint32 PCX;
@@ -183,7 +184,7 @@ static int32 current_track  [NUM_OF_DSK]    = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 static int32 current_sector [NUM_OF_DSK]    = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static int32 current_byte   [NUM_OF_DSK]    = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static int32 current_flag   [NUM_OF_DSK]    = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-static int32 sectors_per_track [NUM_OF_DSK]	= { DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT,
+static int32 sectors_per_track [NUM_OF_DSK] = { DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT,
                                                 DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT,
                                                 DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT,
                                                 DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT };
@@ -201,7 +202,7 @@ static int32 warnDSK10                      = 0;
 static int32 warnDSK11                      = 0;
 static int32 warnDSK12                      = 0;
 static int8 dskbuf[DSK_SECTSIZE];                       /* data Buffer                                  */
-static int32 sector_true					= 0;		/* sector true flag for sector register read    */
+static int32 sector_true                    = 0;        /* sector true flag for sector register read    */
 
 const static int32 alt_bootrom_dsk[BOOTROM_SIZE_DSK] = {  // boot ROM for mini disk support
     0x21, 0x13, 0xff, 0x11, 0x00, 0x4c, 0x0e, 0xe3, /* ff00-ff07 */
@@ -333,7 +334,11 @@ static REG dsk_reg[] = {
     { NULL }
 };
 
-#define DSK_NAME    "Altair Floppy Disk DSK"
+#define DSK_NAME    "Altair Floppy Disk"
+
+static const char* dsk_description(DEVICE *dptr) {
+    return DSK_NAME;
+}
 
 static MTAB dsk_mod[] = {
     { UNIT_DSK_WLK,     0,                  "WRTENB",    "WRTENB",  NULL, NULL, NULL,
@@ -361,10 +366,10 @@ DEVICE dsk_dev = {
     NULL, NULL, &dsk_reset,
     &dsk_boot, &dsk_attach, NULL,
     NULL, (DEV_DISABLE | DEV_DEBUG), 0,
-    dsk_dt, NULL, DSK_NAME
+    dsk_dt, NULL, NULL, NULL, NULL, NULL, &dsk_description
 };
 
-static char* selectInOut(const int32 io) {
+static const char* selectInOut(const int32 io) {
     return io == 0 ? "IN" : "OUT";
 }
 
@@ -394,9 +399,9 @@ static t_stat dsk_reset(DEVICE *dptr) {
 }
 /* dsk_attach - determine type of drive attached based on disk image size */
 
-static t_stat dsk_attach(UNIT *uptr, char *cptr) {
+static t_stat dsk_attach(UNIT *uptr, CONST char *cptr) {
     int32 thisUnitIndex;
-	int32 imageSize;
+    int32 imageSize;
     const t_stat r = attach_unit(uptr, cptr);           /* attach unit  */
     if (r != SCPE_OK)                                   /* error?       */
         return r;
@@ -408,7 +413,7 @@ static t_stat dsk_attach(UNIT *uptr, char *cptr) {
     /*  If the file size is close to the mini-disk image size, set the number of
      tracks to 16, otherwise, 32 sectors per track. */
     
-	imageSize = sim_fsize(uptr -> fileref);
+    imageSize = sim_fsize(uptr -> fileref);
     sectors_per_track[thisUnitIndex] = (((MINI_DISK_SIZE - MINI_DISK_DELTA < imageSize) &&
                                          (imageSize < MINI_DISK_SIZE + MINI_DISK_DELTA)) ?
                                         MINI_DISK_SECT : DSK_SECT);
@@ -547,15 +552,15 @@ int32 dsk10(const int32 port, const int32 io, const int32 data) {
     else {
         current_sector[current_disk]    = 0xff; /* reset internal counters */
         current_byte[current_disk]      = 0xff;
-		if (data & 0x80)                            /* disable drive? */
-			current_flag[current_disk] = 0;         /* yes, clear all flags */
-		else {                                      /* enable drive */
-			current_flag[current_disk] = 0x1a;      /* move head true */
-			if (current_track[current_disk] == 0)   /* track 0? */
-				current_flag[current_disk] |= 0x40; /* yes, set track 0 true as well */
-			if (sectors_per_track[current_disk] == MINI_DISK_SECT)  /* drive enable loads head for Minidisk */
-				current_flag[current_disk] |= 0x84;  
-		}
+        if (data & 0x80)                            /* disable drive? */
+            current_flag[current_disk] = 0;         /* yes, clear all flags */
+        else {                                      /* enable drive */
+            current_flag[current_disk] = 0x1a;      /* move head true */
+            if (current_track[current_disk] == 0)   /* track 0? */
+                current_flag[current_disk] |= 0x40; /* yes, set track 0 true as well */
+            if (sectors_per_track[current_disk] == MINI_DISK_SECT)  /* drive enable loads head for Minidisk */
+                current_flag[current_disk] |= 0x84;  
+        }
     }
     return 0;   /* ignored since OUT */
 }
@@ -587,13 +592,13 @@ int32 dsk11(const int32 port, const int32 io, const int32 data) {
         if (dirty)  /* implies that current_disk < NUM_OF_DSK */
             writebuf();
         if (current_flag[current_disk] & 0x04) {    /* head loaded? */
-			sector_true ^= 1;						/* return sector true every other entry */
-			if (sector_true == 0) {					/* true when zero */
+            sector_true ^= 1;                       /* return sector true every other entry */
+            if (sector_true == 0) {                 /* true when zero */
                 current_sector[current_disk]++;
                 if (current_sector[current_disk] >= sectors_per_track[current_disk])
                     current_sector[current_disk] = 0;
                 current_byte[current_disk] = 0xff;
-			}
+            }
             return (((current_sector[current_disk] << 1) & 0x3e)    /* return sector number and...) */
                     | 0xc0 | sector_true);                          /* sector true, and set 'unused' bits */
         } else
@@ -611,7 +616,7 @@ int32 dsk11(const int32 port, const int32 io, const int32 data) {
                    current_disk, PCX);
         }
         current_track[current_disk]++;
-        current_flag[current_disk] &= 0xbf;		/* mwd 1/29/13: track zero now false */
+        current_flag[current_disk] &= 0xbf;     /* mwd 1/29/13: track zero now false */
         if (current_track[current_disk] > (tracks[current_disk] - 1))
             current_track[current_disk] = (tracks[current_disk] - 1);
         if (dirty)          /* implies that current_disk < NUM_OF_DSK   */

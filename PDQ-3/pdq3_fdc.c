@@ -162,9 +162,9 @@ extern UNIT cpu_unit;
 /* forwards */
 t_stat fdc_svc (UNIT *uptr);
 t_stat fdc_reset (DEVICE *uptr);
-t_stat fdc_attach(UNIT *uptr, char *cptr);
+t_stat fdc_attach(UNIT *uptr, CONST char *cptr);
 t_stat fdc_detach(UNIT *uptr);
-t_stat pdq3_diskCreate(FILE *fileref, char *ctlr_comment);
+t_stat pdq3_diskCreate(FILE *fileref, const char *ctlr_comment);
 t_stat pdq3_diskFormat(DISK_INFO *myDisk);
 static void dma_reqinterrupt();
 
@@ -271,7 +271,7 @@ t_stat fdc_boot(int32 unitnum, DEVICE *dptr) {
   return fdc_autoload(unitnum);
 }
 
-t_stat fdc_attach(UNIT *uptr, char *cptr) {
+t_stat fdc_attach(UNIT *uptr, CONST char *cptr) {
   t_stat rc;
   int i = uptr->u_unitno;
   char header[4];
@@ -349,7 +349,7 @@ static t_stat fdc_start(UNIT *uptr,int time) {
 
 static t_stat fdc_stop(UNIT *uptr) {
   /* request service */
-  sim_debug(DBG_FD_SVC, &fdc_dev, DBG_PCFORMAT2 "Cancel Service\n", DBG_PC, time);
+  sim_debug(DBG_FD_SVC, &fdc_dev, DBG_PCFORMAT2 "Cancel Service\n", DBG_PC);
   return sim_cancel(uptr);
 }
 
@@ -811,7 +811,7 @@ static DRVDATA *fdc_select() {
   return curdrv;
 }
 
-static char *cmdlist[] = {
+static const char *cmdlist[] = {
   "Restore","Seek","Step","Step+Upd","StepIn","StepIn+Upd",
   "StepOut","StepOut+Upd","Read","Read+Multi","Write","WriteMulti",
   "ReadAddr","ForceInt","ReadTrack","WriteTrack"
@@ -1076,7 +1076,7 @@ t_stat fdc_read(t_addr ioaddr, uint16 *data) {
  *
  * If the IMD file already exists, the user will be given the option of overwriting it.
  */
-t_stat pdq3_diskCreate(FILE *fileref, char *ctlr_comment) {
+t_stat pdq3_diskCreate(FILE *fileref, const char *ctlr_comment) {
     DISK_INFO *myDisk = NULL;
     char *comment;
     char *curptr;
@@ -1096,7 +1096,7 @@ t_stat pdq3_diskCreate(FILE *fileref, char *ctlr_comment) {
         }
     }
 
-    if((curptr = comment = calloc(1, MAX_COMMENT_LEN)) == 0) {
+    if((curptr = comment = (char *)calloc(1, MAX_COMMENT_LEN)) == 0) {
         sim_printf("PDQ3_IMD: Memory allocation failure.\n");
         return (SCPE_MEM);
     }

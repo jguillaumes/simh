@@ -1,6 +1,6 @@
 /* hp2100_cpu2.c: HP 2100/1000 FP/DMS/EIG/IOP instructions
 
-   Copyright (c) 2005-2012, Robert M. Supnik
+   Copyright (c) 2005-2016, Robert M. Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -26,6 +26,8 @@
    CPU2         Floating-point, dynamic mapping, extended, and I/O processor
                 instructions
 
+   05-Aug-16    JDB     Renamed the P register from "PC" to "PR"
+   24-Dec-14    JDB     Added casts for explicit downward conversions
    09-May-12    JDB     Separated assignments from conditional expressions
    11-Sep-08    JDB     Moved microcode function prototypes to hp2100_cpu1.h
    05-Sep-08    JDB     Removed option-present tests (now in UIG dispatchers)
@@ -118,9 +120,12 @@ uint32 entry;
 
 entry = (IR >> 4) & 017;                                /* mask to entry point */
 
-if (op_fp[entry] != OP_N)
-    if (reason = cpu_ops (op_fp[entry], op, intrq))     /* get instruction operands */
-        return reason;
+if (op_fp [entry] != OP_N) {
+    reason = cpu_ops (op_fp [entry], op, intrq);        /* get instruction operands */
+
+    if (reason != SCPE_OK)                              /* evaluation failed? */
+        return reason;                                  /* return reason for failure */
+    }
 
 switch (entry) {                                        /* decode IR<7:4> */
 
@@ -273,7 +278,7 @@ switch (entry) {                                        /* decode IR<3:0> */
             BR = (BR + 1) & DMASK;
             XR = (XR - 1) & DMASK;
             if (XR && intrq && !(AR & 1)) {             /* more, int, even? */
-                PC = err_PC;                            /* stop for now */
+                PR = err_PC;                            /* stop for now */
                 break;
                 }
             }
@@ -289,7 +294,7 @@ switch (entry) {                                        /* decode IR<3:0> */
             BR = (BR + 1) & DMASK;
             XR = (XR - 1) & DMASK;
             if (XR && intrq && !(AR & 1)) {             /* more, int, even? */
-                PC = err_PC;                            /* stop for now */
+                PR = err_PC;                            /* stop for now */
                 break;
                 }
             }
@@ -305,7 +310,7 @@ switch (entry) {                                        /* decode IR<3:0> */
             BR = (BR + 1) & DMASK;
             XR = (XR - 1) & DMASK;
             if (XR && intrq && !(AR & 1)) {             /* more, int, even? */
-                PC = err_PC;                            /* stop for now */
+                PR = err_PC;                            /* stop for now */
                 break;
                 }
             }
@@ -319,7 +324,7 @@ switch (entry) {                                        /* decode IR<3:0> */
             BR = (BR + 1) & DMASK;
             XR = (XR - 1) & DMASK;
             if (XR && intrq) {                          /* more and intr? */
-                PC = err_PC;                            /* stop for now */
+                PR = err_PC;                            /* stop for now */
                 break;
                 }
             }
@@ -333,7 +338,7 @@ switch (entry) {                                        /* decode IR<3:0> */
             BR = (BR + 1) & DMASK;
             XR = (XR - 1) & DMASK;
             if (XR && intrq) {                          /* more and intr? */
-                PC = err_PC;                            /* stop for now */
+                PR = err_PC;                            /* stop for now */
                 break;
                 }
             }
@@ -347,7 +352,7 @@ switch (entry) {                                        /* decode IR<3:0> */
             BR = (BR + 1) & DMASK;
             XR = (XR - 1) & DMASK;
             if (XR && intrq) {                          /* more and intr? */
-                PC = err_PC;                            /* stop for now */
+                PR = err_PC;                            /* stop for now */
                 break;
                 }
             }
@@ -387,8 +392,8 @@ switch (entry) {                                        /* decode IR<3:0> */
             if (op[0].word & 0040000) dms_ump = UMAP;   /* set/clr usr */
             }
         mp_dms_jmp (op[1].word, 2);                     /* mpck jmp target */
-        PCQ_ENTRY;                                      /* save old PC */
-        PC = op[1].word;                                /* jump */
+        PCQ_ENTRY;                                      /* save old P */
+        PR = op[1].word;                                /* jump */
         ion_defer = 1;                                  /* defer intr */
         break;
 
@@ -412,7 +417,7 @@ switch (entry) {                                        /* decode IR<3:0> */
             AR = (AR + 1) & DMASK;
             BR = (BR + 1) & DMASK;
             if (intrq && ((XR & 017) == 017)) {         /* intr, grp of 16? */
-                PC = err_PC;                            /* stop for now */
+                PR = err_PC;                            /* stop for now */
                 break;
                 }
             }
@@ -427,7 +432,7 @@ switch (entry) {                                        /* decode IR<3:0> */
             AR = (AR + 1) & DMASK;
             BR = (BR + 1) & DMASK;
             if (intrq && ((XR & 017) == 017)) {         /* intr, grp of 16? */
-                PC = err_PC;
+                PR = err_PC;
                 break;
                 }
             }
@@ -455,7 +460,7 @@ switch (entry) {                                        /* decode IR<3:0> */
 
     case 026:                                           /* XCA, XCB 10x726 (OP_A) */
         if (ABREG[absel] != ReadWA (op[0].word))        /* compare alt */
-            PC = (PC + 1) & VAMASK;
+            PR = (PR + 1) & VAMASK;
         break;
 
     case 027:                                           /* LFA, LFB 10x727 (OP_N) */
@@ -465,11 +470,11 @@ switch (entry) {                                        /* decode IR<3:0> */
         break;
 
     case 030:                                           /* RSA, RSB 10x730 (OP_N) */
-        ABREG[absel] = dms_upd_sr ();                   /* save stat */
+        ABREG[absel] = (uint16) dms_upd_sr ();          /* save stat */
         break;
 
     case 031:                                           /* RVA, RVB 10x731 (OP_N) */
-        ABREG[absel] = dms_upd_vr (err_PC);             /* return updated violation register */
+        ABREG[absel] = (uint16) dms_upd_vr (err_PC);    /* return updated violation register */
         break;
 
     case 032:                                           /* DJP 105732 (OP_A) */
@@ -477,16 +482,16 @@ switch (entry) {                                        /* decode IR<3:0> */
         dms_enb = 0;                                    /* disable map */
         dms_ump = SMAP;
         mp_dms_jmp (op[0].word, 2);                     /* validate jump addr */
-        PCQ_ENTRY;                                      /* save curr PC */
-        PC = op[0].word;                                /* new PC */
+        PCQ_ENTRY;                                      /* save curr P */
+        PR = op[0].word;                                /* new P */
         ion_defer = 1;
         break;
 
     case 033:                                           /* DJS 105733 (OP_A) */
         if (dms_ump) dms_viol (err_PC, MVI_PRV);        /* priv viol if prot */
-        WriteW (op[0].word, PC);                        /* store ret addr */
-        PCQ_ENTRY;                                      /* save curr PC */
-        PC = (op[0].word + 1) & VAMASK;                 /* new PC */
+        WriteW (op[0].word, PR);                        /* store ret addr */
+        PCQ_ENTRY;                                      /* save curr P */
+        PR = (op[0].word + 1) & VAMASK;                 /* new P */
         dms_enb = 0;                                    /* disable map */
         dms_ump = SMAP;
         ion_defer = 1;                                  /* defer intr */
@@ -497,16 +502,16 @@ switch (entry) {                                        /* decode IR<3:0> */
         dms_enb = 1;                                    /* enable system */
         dms_ump = SMAP;
         mp_dms_jmp (op[0].word, 2);                     /* validate jump addr */
-        PCQ_ENTRY;                                      /* save curr PC */
-        PC = op[0].word;                                /* jump */
+        PCQ_ENTRY;                                      /* save curr P */
+        PR = op[0].word;                                /* jump */
         ion_defer = 1;                                  /* defer intr */
         break;
 
     case 035:                                           /* SJS 105735 (OP_A) */
         if (dms_ump) dms_viol (err_PC, MVI_PRV);        /* priv viol if prot */
-        t = PC;                                         /* save retn addr */
-        PCQ_ENTRY;                                      /* save curr PC */
-        PC = (op[0].word + 1) & VAMASK;                 /* new PC */
+        t = PR;                                         /* save retn addr */
+        PCQ_ENTRY;                                      /* save curr P */
+        PR = (op[0].word + 1) & VAMASK;                 /* new P */
         dms_enb = 1;                                    /* enable system */
         dms_ump = SMAP;
         WriteW (op[0].word, t);                         /* store ret addr */
@@ -518,16 +523,16 @@ switch (entry) {                                        /* decode IR<3:0> */
         dms_enb = 1;                                    /* enable user */
         dms_ump = UMAP;
         mp_dms_jmp (op[0].word, 2);                     /* validate jump addr */
-        PCQ_ENTRY;                                      /* save curr PC */
-        PC = op[0].word;                                /* jump */
+        PCQ_ENTRY;                                      /* save curr P */
+        PR = op[0].word;                                /* jump */
         ion_defer = 1;                                  /* defer intr */
         break;
 
     case 037:                                           /* UJS 105737 (OP_A) */
         if (dms_ump) dms_viol (err_PC, MVI_PRV);        /* priv viol if prot */
-        t = PC;                                         /* save retn addr */
-        PCQ_ENTRY;                                      /* save curr PC */
-        PC = (op[0].word + 1) & VAMASK;                 /* new PC */
+        t = PR;                                         /* save retn addr */
+        PCQ_ENTRY;                                      /* save curr P */
+        PR = (op[0].word + 1) & VAMASK;                 /* new P */
         dms_enb = 1;                                    /* enable user */
         dms_ump = UMAP;
         WriteW (op[0].word, t);                         /* store ret addr */
@@ -643,7 +648,7 @@ switch (entry) {                                        /* decode IR<4:0> */
         break;
 
     case 004:                                           /* CXA, CXB 10x744 (OP_N) */
-        ABREG[absel] = XR;                              /* copy from XR */
+        ABREG[absel] = (uint16) XR;                     /* copy from XR */
         break;
 
     case 005:                                           /* LDX 105745 (OP_K)*/
@@ -660,7 +665,7 @@ switch (entry) {                                        /* decode IR<4:0> */
     case 007:                                           /* XAX, XBX 10x747 (OP_N) */
         t = XR;                                         /* exchange XR */
         XR = ABREG[absel];
-        ABREG[absel] = t;
+        ABREG[absel] = (uint16) t;
         break;
 
     case 010:                                           /* SAY, SBY 10x750 (OP_A) */
@@ -682,7 +687,7 @@ switch (entry) {                                        /* decode IR<4:0> */
         break;
 
     case 014:                                           /* CYA, CYB 10x754 (OP_N) */
-        ABREG[absel] = YR;                              /* copy from YR */
+        ABREG[absel] = (uint16) YR;                     /* copy from YR */
         break;
 
     case 015:                                           /* LDY 105755 (OP_K) */
@@ -699,26 +704,26 @@ switch (entry) {                                        /* decode IR<4:0> */
     case 017:                                           /* XAY, XBY 10x757 (OP_N) */
         t = YR;                                         /* exchange YR */
         YR = ABREG[absel];
-        ABREG[absel] = t;
+        ABREG[absel] = (uint16) t;
         break;
 
 /* EIG module 2 */
 
     case 020:                                           /* ISX 105760 (OP_N) */
         XR = (XR + 1) & DMASK;                          /* incr XR */
-        if (XR == 0) PC = (PC + 1) & VAMASK;            /* skip if zero */
+        if (XR == 0) PR = (PR + 1) & VAMASK;            /* skip if zero */
         break;
 
     case 021:                                           /* DSX 105761 (OP_N) */
         XR = (XR - 1) & DMASK;                          /* decr XR */
-        if (XR == 0) PC = (PC + 1) & VAMASK;            /* skip if zero */
+        if (XR == 0) PR = (PR + 1) & VAMASK;            /* skip if zero */
         break;
 
     case 022:                                           /* JLY 105762 (OP_A) */
         mp_dms_jmp (op[0].word, 0);                     /* validate jump addr */
         PCQ_ENTRY;
-        YR = PC;                                        /* ret addr to YR */
-        PC = op[0].word;                                /* jump */
+        YR = PR;                                        /* ret addr to YR */
+        PR = op[0].word;                                /* jump */
         break;
 
     case 023:                                           /* LBT 105763 (OP_N) */
@@ -745,7 +750,7 @@ switch (entry) {                                        /* decode IR<4:0> */
             BR = (BR + 1) & DMASK;                      /* incr dst */
             wc = (wc - 1) & DMASK;                      /* decr cnt */
             if (intrq && wc) {                          /* intr, more to do? */
-                PC = err_PC;                            /* back up PC */
+                PR = err_PC;                            /* back up P */
                 break;
                 }
             }
@@ -760,7 +765,7 @@ switch (entry) {                                        /* decode IR<4:0> */
             v1 = ReadB (AR);                            /* get src1 */
             v2 = ReadB (BR);                            /* get src2 */
             if (v1 != v2) {                             /* compare */
-                PC = (PC + 1 + (v1 > v2)) & VAMASK;
+                PR = (PR + 1 + (v1 > v2)) & VAMASK;
                 BR = (BR + wc) & DMASK;                 /* update BR */
                 wc = 0;                                 /* clr interim */
                 break;
@@ -769,7 +774,7 @@ switch (entry) {                                        /* decode IR<4:0> */
             BR = (BR + 1) & DMASK;                      /* incr src2 */
             wc = (wc - 1) & DMASK;                      /* decr cnt */
             if (intrq && wc) {                          /* intr, more to do? */
-                PC = err_PC;                            /* back up PC */
+                PR = err_PC;                            /* back up P */
                 break;
                 }
             }
@@ -784,11 +789,11 @@ switch (entry) {                                        /* decode IR<4:0> */
             if (t == v1) break;                         /* test match? */
             BR = (BR + 1) & DMASK;
             if (t == v2) {                              /* term match? */
-                PC = (PC + 1) & VAMASK;
+                PR = (PR + 1) & VAMASK;
                 break;
                 }
             if (intrq) {                                /* int pending? */
-                PC = err_PC;                            /* back up PC */
+                PR = err_PC;                            /* back up P */
                 break;
                 }
             }
@@ -796,19 +801,19 @@ switch (entry) {                                        /* decode IR<4:0> */
 
     case 030:                                           /* ISY 105770 (OP_N) */
         YR = (YR + 1) & DMASK;                          /* incr YR */
-        if (YR == 0) PC = (PC + 1) & VAMASK;            /* skip if zero */
+        if (YR == 0) PR = (PR + 1) & VAMASK;            /* skip if zero */
         break;
 
     case 031:                                           /* DSY 105771 (OP_N) */
         YR = (YR - 1) & DMASK;                          /* decr YR */
-        if (YR == 0) PC = (PC + 1) & VAMASK;            /* skip if zero */
+        if (YR == 0) PR = (PR + 1) & VAMASK;            /* skip if zero */
         break;
 
     case 032:                                           /* JPY 105772 (OP_C) */
         op[0].word = (op[0].word + YR) & VAMASK;        /* index, no indir */
         mp_dms_jmp (op[0].word, 0);                     /* validate jump addr */
         PCQ_ENTRY;
-        PC = op[0].word;                                /* jump */
+        PR = op[0].word;                                /* jump */
         break;
 
     case 033:                                           /* SBS 105773 (OP_KA) */
@@ -823,7 +828,7 @@ switch (entry) {                                        /* decode IR<4:0> */
 
     case 035:                                           /* TBS 105775 (OP_KK) */
         if ((op[1].word & op[0].word) != op[0].word)    /* test bits */
-            PC = (PC + 1) & VAMASK;
+            PR = (PR + 1) & VAMASK;
         break;
 
     case 036:                                           /* CMW 105776 (OP_KV) */
@@ -836,7 +841,7 @@ switch (entry) {                                        /* decode IR<4:0> */
             sop1 = (int32) SEXT (v1);                   /* signed */
             sop2 = (int32) SEXT (v2);
             if (sop1 != sop2) {                         /* compare */
-                PC = (PC + 1 + (sop1 > sop2)) & VAMASK;
+                PR = (PR + 1 + (sop1 > sop2)) & VAMASK;
                 BR = (BR + wc) & DMASK;                 /* update BR */
                 wc = 0;                                 /* clr interim */
                 break;
@@ -845,7 +850,7 @@ switch (entry) {                                        /* decode IR<4:0> */
             BR = (BR + 1) & DMASK;                      /* incr src2 */
             wc = (wc - 1) & DMASK;                      /* decr cnt */
             if (intrq && wc) {                          /* intr, more to do? */
-                PC = err_PC;                            /* back up PC */
+                PR = err_PC;                            /* back up P */
                 break;
                 }
             }
@@ -866,7 +871,7 @@ switch (entry) {                                        /* decode IR<4:0> */
             BR = (BR + 1) & DMASK;                      /* incr dst */
             wc = (wc - 1) & DMASK;                      /* decr cnt */
             if (intrq && wc) {                          /* intr, more to do? */
-                PC = err_PC;                            /* back up PC */
+                PR = err_PC;                            /* back up P */
                 break;
                 }
             }
@@ -1027,7 +1032,7 @@ switch (entry) {                                        /* decode IR<5:0> */
         break;
 
     case 002:                                           /* READF 105462 (OP_N) */
-        AR = iop_sp;                                    /* copy stk ptr */
+        AR = (uint16) iop_sp;                           /* copy stk ptr */
         break;
 
     case 003:                                           /* INS 105463 (OP_N) */
@@ -1040,7 +1045,7 @@ switch (entry) {                                        /* decode IR<5:0> */
         WriteW ((BR - 1) & VAMASK, 0);                  /* entry link */
         WriteW ((tp - 1) & VAMASK, BR);                 /* tail link */
         WriteW ((AR + 1) & VAMASK, BR);                 /* queue tail */
-        if (hp != 0) PC = (PC + 1) & VAMASK;            /* q not empty? skip */
+        if (hp != 0) PR = (PR + 1) & VAMASK;            /* q not empty? skip */
         break;
 
     case 005:                                           /* PENQ 105465 (OP_N) */
@@ -1049,7 +1054,7 @@ switch (entry) {                                        /* decode IR<5:0> */
         WriteW (AR & VAMASK, BR);                       /* queue head */
         if (hp == 0)                                    /* q empty? */
             WriteW ((AR + 1) & VAMASK, BR);             /* queue tail */
-        else PC = (PC + 1) & VAMASK;                    /* skip */
+        else PR = (PR + 1) & VAMASK;                    /* skip */
         break;
 
     case 006:                                           /* DEQ 105466 (OP_N) */
@@ -1059,7 +1064,7 @@ switch (entry) {                                        /* decode IR<5:0> */
             WriteW (AR & VAMASK, hp);                   /* becomes queue head */
             if (hp == 0)                                /* q now empty? */
                 WriteW ((AR + 1) & VAMASK, (AR + 1) & DMASK);
-            PC = (PC + 1) & VAMASK;                     /* skip */
+            PR = (PR + 1) & VAMASK;                     /* skip */
             }
         break;
 
@@ -1074,7 +1079,7 @@ switch (entry) {                                        /* decode IR<5:0> */
             wc = (wc - 1) & DMASK;                      /* decr cnt */
             if (wc && intrq) {                          /* more and intr? */
                 WriteW (op[0].word, wc);                /* save count */
-                PC = err_PC;                            /* stop for now */
+                PR = err_PC;                            /* stop for now */
                 break;
                 }
             }
@@ -1097,7 +1102,7 @@ switch (entry) {                                        /* decode IR<5:0> */
 
     case 012:                                           /* PRFEX 105472 (OP_A) */
         PCQ_ENTRY;
-        PC = ReadW (op[0].word) & VAMASK;               /* jump indirect */
+        PR = ReadW (op[0].word) & VAMASK;               /* jump indirect */
         WriteW (op[0].word, 0);                         /* clear exit */
         break;
 

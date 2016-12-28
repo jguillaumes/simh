@@ -1,7 +1,7 @@
 /* hp2100_cpu7.c: HP 1000 VIS and SIGNAL/1000 microcode
 
    Copyright (c) 2008, Holger Veit
-   Copyright (c) 2006-2013, J. David Bryan
+   Copyright (c) 2006-2016, J. David Bryan
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -26,6 +26,8 @@
 
    CPU7         Vector Instruction Set and SIGNAL firmware
 
+   05-Aug-16    JDB     Renamed the P register from "PC" to "PR"
+   24-Dec-14    JDB     Added casts for explicit downward conversions
    18-Mar-13    JDB     Moved EMA helper declarations to hp2100_cpu1.h
    09-May-12    JDB     Separated assignments from conditional expressions
    06-Feb-12    JDB     Corrected "opsize" parameter type in vis_abs
@@ -150,7 +152,7 @@ int16 ix1 = INT16(op[2].word) * delta;
 uint32 v2addr = op[3].word;
 int16 ix2 = INT16(op[4].word) * delta;
 int16 i, n = INT16(op[5].word);
-uint32 fpuop = (subcode & 060) | (opsize==fp_f ? 0 : 2);
+uint16 fpuop = (uint16) (subcode & 060) | (opsize==fp_f ? 0 : 2);
 
 if (n <= 0) return;
 for (i=0; i<n; i++) {
@@ -174,7 +176,7 @@ int32 ix2 = INT16(op[3].word) * delta;
 uint32 v3addr = op[4].word;
 int32 ix3 = INT16(op[5].word) * delta;
 int16 i, n = INT16(op[6].word);
-uint32 fpuop = (subcode & 060) | (opsize==fp_f ? 0 : 2);
+uint16 fpuop = (uint16) (subcode & 060) | (opsize==fp_f ? 0 : 2);
 
 if (n <= 0) return;
 for (i=0; i<n; i++) {
@@ -205,7 +207,7 @@ uint32 v1addr = op[1].word;
 int16 ix1 = INT16(op[2].word) * delta;
 int16 n = INT16(op[3].word);
 int16 i,mxmn,sign;
-int32 subop = 020 | (opsize==fp_f ? 0 : 2);
+uint16 subop = 020 | (opsize==fp_f ? 0 : 2);
 
 if (n <= 0) return;
 mxmn = 0;                                                /* index of maxmin element */
@@ -288,7 +290,7 @@ out->fpk[1] = (in.fpk[1] & 0177400) | (in.fpk[3] & 0377);
 
 static void vis_vsmnm(OPS op,OPSIZE opsize,t_bool doabs)
 {
-uint32 fpuop;
+uint16 fpuop;
 OP v1,sumnrm = zero;
 int16 delta = opsize==fp_f ? 2 : 4;
 uint32 saddr = op[0].word;
@@ -374,19 +376,19 @@ entry = IR & 017;                                        /* mask to entry point 
 pattern = op_vis[entry];
 
 if (entry==0) {                                          /* retrieve sub opcode */
-    ret = ReadOp (PC, in_s);                             /* get it */
+    ret = ReadOp (PR, in_s);                             /* get it */
     subcode = ret.word;
     if (subcode & 0100000)                               /* special property of ucode */
         subcode = AR;                                    /*   for reentry */
-    PC = (PC + 1) & VAMASK;                              /* bump to real argument list */
+    PR = (PR + 1) & VAMASK;                              /* bump to real argument list */
     pattern = (subcode & 0400) ? OP_AAKAKK : OP_AKAKAKK; /* scalar or vector operation */
     }
 
 if (pattern != OP_N) {
     if (op_ftnret[entry]) {                              /* most VIS instrs ignore RTN addr */
-        ret = ReadOp(PC, in_s);
+        ret = ReadOp(PR, in_s);
         rtn = rtn1 = ret.word;                           /* but save it just in case */
-        PC = (PC + 1) & VAMASK;                          /* move to next argument */
+        PR = (PR + 1) & VAMASK;                          /* move to next argument */
         }
     reason = cpu_ops (pattern, op, intrq);               /* get instruction operands */
     if (reason != SCPE_OK)                               /* evaluation failed? */
@@ -444,17 +446,17 @@ switch (entry) {                                         /* decode IR<3:0> */
        vis_movswp(op,opsize,TRUE);
        break;
    case 014:                                             /* .ERES (OP_(A)AA) */
-       reason = cpu_ema_eres(&rtn,op[2].word,PC,debug);  /* handle the ERES instruction */
-       PC = rtn;
+       reason = cpu_ema_eres(&rtn,op[2].word,PR,debug);  /* handle the ERES instruction */
+       PR = rtn;
        if (debug)
            fprintf (sim_deb,
                     ">>CPU VIS: return .ERES: AR = %06o, BR = %06o, rtn=%s\n",
-                    AR, BR, PC==op[0].word ? "error" : "good");
+                    AR, BR, PR==op[0].word ? "error" : "good");
        break;
 
    case 015:                                             /* .ESEG (OP_(A)A) */
        reason = cpu_ema_eseg(&rtn,IR,op[0].word,debug);  /* handle the ESEG instruction */
-       PC = rtn;
+       PR = rtn;
        if (debug)
            fprintf (sim_deb,
                     ">>CPU VIS: return .ESEG: AR = %06o , BR = %06o, rtn=%s\n",
@@ -463,7 +465,7 @@ switch (entry) {                                         /* decode IR<3:0> */
 
    case 016:                                             /* .VSET (OP_(A)AAACCC) */
        reason = cpu_ema_vset(&rtn,op,debug);
-       PC = rtn;
+       PR = rtn;
        if (debug)
            fprintf (sim_deb, ">>CPU VIS: return .VSET: AR = %06o BR = %06o, rtn=%s\n",
                     AR, BR,
@@ -473,7 +475,7 @@ switch (entry) {                                         /* decode IR<3:0> */
    case 017:                                             /* [test] (OP_N) */
        XR = 3;                                           /* firmware revision */
        SR = 0102077;                                     /* test passed code */
-       PC = (PC + 1) & VAMASK;                           /* P+2 return for firmware w/VIS */
+       PR = (PR + 1) & VAMASK;                           /* P+2 return for firmware w/VIS */
        break;
    default:                                              /* others undefined */
         reason = stop_inst;
@@ -536,7 +538,7 @@ static const OP_PAT op_signal[16] = {
   };
 
 /* complex addition helper */
-static void sig_caddsub(uint32 addsub,OPS op)
+static void sig_caddsub(uint16 addsub,OPS op)
 {
 OP a,b,c,d,p1,p2;
 
@@ -617,7 +619,7 @@ WriteOp(im+rev, v1i, fp_f);
 }
 
 /* helper for PRSCR/UNSCR */
-static OP sig_scadd(uint32 oper,t_bool addh, OP a, OP b)
+static OP sig_scadd(uint16 oper,t_bool addh, OP a, OP b)
 {
 OP r;
 static const OP plus_half = { { 0040000, 0000000 } };   /* DEC +0.5 */
@@ -679,7 +681,7 @@ switch (entry) {                                   /* decode IR<3:0> */
          * Given a complex*8 vector of nbits (power of 2), this calculates:
          * swap( vect[idx], vect[rev(idx)]) where rev(i) is the bitreversed value of i */
         sig_bitrev(op[1].word, op[1].word+2, op[2].word-1, op[3].word, 4);
-        PC = op[0].word & VAMASK;
+        PR = op[0].word & VAMASK;
         break;
 
     case 001:                                      /* BTRFY (OP_AAFFKK) */
@@ -694,7 +696,7 @@ switch (entry) {                                   /* decode IR<3:0> */
         sig_btrfy(op[1].word, op[1].word+2,
                   op[2], op[3],
                   2*(op[4].word-1), 2*op[5].word);
-        PC = op[0].word & VAMASK;
+        PR = op[0].word & VAMASK;
         break;
 
     case 002:                                      /* UNSCR (OP_AAFFKK) */
@@ -728,7 +730,7 @@ switch (entry) {                                   /* decode IR<3:0> */
         WriteOp(RE(v + idx2), p1, fp_f);
         (void)fp_exec(020, &p2, d, m2);           /* VI[idx2] := 0.5*(p3-p4) - imag(W*(c,d)) */
         WriteOp(IM(v + idx2), p2, fp_f);
-        PC = op[0].word & VAMASK;
+        PR = op[0].word & VAMASK;
         break;
 
     case 003:                                      /* PRSCR (OP_AAFFKK) */
@@ -762,7 +764,7 @@ switch (entry) {                                   /* decode IR<3:0> */
         WriteOp(RE(v + idx2), p1, fp_f);
         (void)fp_exec(020, &p2, m1, d);           /* VI[idx2] := imag(W*(c,d)) - (p3-p4) */
         WriteOp(IM(v + idx2), p2, fp_f);
-        PC = op[0].word & VAMASK;
+        PR = op[0].word & VAMASK;
         break;
 
     case 004:                                      /* BITR1 (OP_AAAKK) */
@@ -781,7 +783,7 @@ switch (entry) {                                   /* decode IR<3:0> */
          * difference to BITRV is that BITRV uses complex*8, and BITR1 uses separate real*4
          * vectors for Real and Imag parts */
         sig_bitrev(op[1].word, op[2].word, op[3].word-1, op[4].word, 2);
-        PC = op[0].word & VAMASK;
+        PR = op[0].word & VAMASK;
         break;
 
 
@@ -798,7 +800,7 @@ switch (entry) {                                   /* decode IR<3:0> */
         sig_btrfy(op[1].word, op[2].word,
                   op[3], op[4],
                   op[5].word-1, op[6].word);
-        PC = op[0].word & VAMASK;
+        PR = op[0].word & VAMASK;
         break;
 
     case 006:                                      /* .CADD (OP_AAA) */
@@ -927,7 +929,7 @@ switch (entry) {                                   /* decode IR<3:0> */
     case 017:                                       /* [slftst] (OP_N) */
         XR = 2;                                     /* firmware revision */
         SR = 0102077;                               /* test passed code */
-        PC = (PC + 1) & VAMASK;                     /* P+2 return for firmware w/SIGNAL1000 */
+        PR = (PR + 1) & VAMASK;                     /* P+2 return for firmware w/SIGNAL1000 */
         break;
 
     case 016:                                       /* invalid */
