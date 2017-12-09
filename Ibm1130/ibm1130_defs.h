@@ -311,7 +311,7 @@ char   *read_cmdline (char *ptr, int size, FILE *stream);
 
 #if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
 #include <sys/param.h>
-#if defined(BSD)
+#if defined(__FreeBSD__)
 #define mode_t __mode_t
 #endif
 #endif
