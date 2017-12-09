@@ -308,3 +308,10 @@ char   *read_cmdline (char *ptr, int size, FILE *stream);
 #  define GUI_BEGIN_CRITICAL_SECTION
 #  define GUI_END_CRITICAL_SECTION
 #endif
+
+#if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
+#include <sys/param.h>
+#if defined(BSD)
+#define mode_t __mode_t
+#endif
+#endif
