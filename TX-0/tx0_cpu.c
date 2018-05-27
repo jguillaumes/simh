@@ -234,6 +234,8 @@ In addtion, many of the operate-class micro-orders changed.
 #define UNIT_EXT_INST   (1 << UNIT_V_EXT)
 #define UNIT_MSIZE      (1 << UNIT_V_MSIZE)
 
+#define MIN(a,b) (((a) < (b)) ? (a) : (b))
+
 #define HIST_PC         0x40000000
 #define HIST_V_SHF      18
 #define HIST_MIN        64
@@ -1193,19 +1195,24 @@ for (k = 0; k < lnt; k++) {                             /* print specified */
 return SCPE_OK;
 }
 
+#ifdef USE_DISPLAY
+#include "display/display.h"      /* prototypes */
+
 /* set "test switches"; from display code */
 void
-cpu_set_switches(unsigned long bits)
+cpu_set_switches(unsigned long v1, unsigned long v2)
 {
     /* just what we want; smaller CPUs might want to shift down? */
-    TAC = bits;
+    TAC = v1 ^ v2;
 }
 
-unsigned long
-cpu_get_switches(void)
+void
+cpu_get_switches(unsigned long *p1, unsigned long *p2)
 {
-    return TAC;
+    *p1 = TAC;
+    *p2 = 0;
 }
+#endif
 
 t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag) {
     uint32 word;
@@ -1223,7 +1230,7 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag) {
     } else {
         lo = strtotv(cptr, &result, 8) & 0xFFFF;
         sz = sim_fsize(fileref);
-        sz_words = sz / 4;
+        sz_words = MIN (sz, sizeof (M)) / 4;
         for (j = lo; j < sz_words; j++) {
             sim_fread(&word, 4, 1, fileref);
             M[j] = word;

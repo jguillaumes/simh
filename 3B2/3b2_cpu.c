@@ -1,4 +1,4 @@
-/* 3b2_cpu.c: AT&T 3B2 Model 400 CPU (WE32100) Implementation
+ /* 3b2_cpu.c: AT&T 3B2 Model 400 CPU (WE32100) Implementation
 
    Copyright (c) 2017, Seth J. Morabito
 
@@ -27,8 +27,6 @@
    other dealings in this Software without prior written authorization
    from the author.
 */
-
-#include <assert.h>
 
 #include "3b2_cpu.h"
 #include "rom_400_bin.h"
@@ -68,10 +66,8 @@ extern uint16 csr_data;
 uint32 R[16];
 
 /* Other global CPU state */
-int8   cpu_dtype      = -1;        /* Default datatype for the current
-                                      instruction */
-int8   cpu_etype      = -1;        /* Currently set expanded datatype */
-
+uint8  cpu_int_ipl    = 0;         /* Interrupt IPL level */
+uint8  cpu_int_vec    = 0;         /* Interrupt vector */
 t_bool cpu_nmi        = FALSE;     /* If set, there has been an NMI */
 
 int32  pc_incr        = 0;         /* Length (in bytes) of instruction
@@ -80,6 +76,11 @@ t_bool cpu_ex_halt    = FALSE;     /* Flag to halt on exceptions /
                                       traps */
 t_bool cpu_km         = FALSE;     /* If true, kernel mode has been forced
                                       for memory access */
+CTAB sys_cmd[] = {
+    { "BOOT", &sys_boot, RU_BOOT,
+      "bo{ot}                   boot simulator\n", NULL, &run_cmd_message },
+    { NULL }
+};
 
 BITFIELD psw_bits[] = {
     BITFFMT(ET,2,%d),    /* Exception Type */
@@ -131,8 +132,8 @@ static DEBTAB cpu_deb_tab[] = {
     { "EXECUTE",    EXECUTE_MSG,    "Instruction execute"   },
     { "INIT",       INIT_MSG,       "Initialization"        },
     { "IRQ",        IRQ_MSG,        "Interrupt Handling"    },
-    { "IO",         IO_D_MSG,       "I/O Dispatch"          },
-    { "TRACE",      TRACE_MSG,      "Call Trace"            },
+    { "IO",         IO_DBG,         "I/O Dispatch"          },
+    { "TRACE",      TRACE_DBG,      "Call Trace"            },
     { "ERROR",      ERR_MSG,        "Error"                 },
     { NULL,         0                                       }
 };
@@ -141,6 +142,11 @@ UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE) };
 
 #define UNIT_V_EXHALT   (UNIT_V_UF + 0)                 /* halt to console */
 #define UNIT_EXHALT     (1u << UNIT_V_EXHALT)
+
+const char *cio_names[8] = {
+    "", "*VOID*", "*VOID*", "PORTS",
+    "*VOID*", "CTC", "*VOID*", "*VOID*"
+};
 
 MTAB cpu_mod[] = {
     { UNIT_MSIZE, (1u << 20), NULL, "1M",
@@ -151,11 +157,17 @@ MTAB cpu_mod[] = {
       &cpu_set_size, NULL, NULL, "Set Memory to 4M bytes" },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "HISTORY", "HISTORY",
       &cpu_set_hist, &cpu_show_hist, NULL, "Displays instruction history" },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "VIRTUAL", NULL,
+      NULL, &cpu_show_virt, NULL, "Show translation for virtual address" },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "STACK", NULL,
+      NULL, &cpu_show_stack, NULL, "Display the current stack with optional depth" },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "CIO", NULL,
+      NULL, &cpu_show_cio, NULL, "Display CIO configuration" },
     { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE", &sim_set_idle, &sim_show_idle },
     { MTAB_XTD|MTAB_VDV, 0, NULL, "NOIDLE", &sim_clr_idle, NULL },
-    { UNIT_EXHALT, UNIT_EXHALT, "Halt on Exception", "EX_HALT",
+    { UNIT_EXHALT, UNIT_EXHALT, "Halt on Exception", "EXHALT",
       NULL, NULL, NULL, "Enables Halt on exceptions and traps" },
-    { UNIT_EXHALT, 0, "No halt on exception", "NOEX_HALT",
+    { UNIT_EXHALT, 0, "No halt on exception", "NOEXHALT",
       NULL, NULL, NULL, "Disables Halt on exceptions and traps" },
     { 0 }
 };
@@ -497,6 +509,54 @@ const uint32 shift_32_table[65] =
     0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
 };
 
+t_stat cpu_show_stack(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
+{
+    uint32 i, j;
+    uint32 addr, v, count;
+    uint8 tmp;
+    char *cptr = (char *) desc;
+    t_stat result;
+
+    if (cptr) {
+        count = (size_t) get_uint(cptr, 10, 128, &result);
+        if ((result != SCPE_OK) || (count == 0)) {
+            return SCPE_ARG;
+        }
+    } else {
+        count = 8;
+    }
+
+    for (i = 0; i < (count * 4); i += 4) {
+        v = 0;
+        addr = R[NUM_SP] - i;
+
+        for (j = 0; j < 4; j++) {
+            result = examine(addr + j, &tmp);
+            if (result != SCPE_OK) {
+                return result;
+            }
+            v |= (uint32) tmp << ((3 - j) * 8);
+        }
+
+        fprintf(st, "  %08x: %08x\n", addr, v);
+    }
+
+    return SCPE_OK;
+}
+
+t_stat cpu_show_cio(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
+{
+    uint32 i;
+
+    fprintf(st, "  SLOT     DEVICE\n");
+    fprintf(st, "---------------------\n");
+    for (i = 0; i < CIO_SLOTS; i++) {
+        fprintf(st, "   %d        %s\n", i, cio_names[cio[i].id & 0x7]);
+    }
+
+    return SCPE_OK;
+}
+
 void cpu_load_rom()
 {
     uint32 i, index, sc, mask, val;
@@ -513,6 +573,19 @@ void cpu_load_rom()
 
         ROM[index] = (ROM[index] & ~mask) | (val << sc);
     }
+}
+
+t_stat sys_boot(int32 flag, CONST char *ptr)
+{
+    char gbuf[CBUFSIZE];
+
+    get_glyph(ptr, gbuf, 0);
+
+    if (gbuf[0] && strcmp(gbuf, "CPU")) {
+        return SCPE_ARG;
+    }
+
+    return run_cmd(flag, "CPU");
 }
 
 t_stat cpu_boot(int32 unit_num, DEVICE *dptr)
@@ -533,6 +606,10 @@ t_stat cpu_boot(int32 unit_num, DEVICE *dptr)
      *     in the PCB, if bit I in PSW is set.
      */
 
+    sim_debug(EXECUTE_MSG, &cpu_dev,
+              "CPU Boot/Reset Initiated. PC=%08x SP=%08x\n",
+              R[NUM_PC], R[NUM_SP]);
+
     mmu_disable();
 
     R[NUM_PCBP] = pread_w(0x80);
@@ -548,10 +625,6 @@ t_stat cpu_boot(int32 unit_num, DEVICE *dptr)
     /* set ISC to External Reset */
     R[NUM_PSW] &= ~PSW_ISC_MASK;
     R[NUM_PSW] |= 3 << PSW_ISC ;
-
-    sim_debug(EXECUTE_MSG, &cpu_dev,
-              ">>> CPU BOOT/RESET COMPLETE. PC=%08x SP=%08x\n",
-              R[NUM_PC], R[NUM_SP]);
 
     return SCPE_OK;
 }
@@ -571,12 +644,13 @@ t_stat cpu_ex(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
         *vptr = value;
         return succ;
     } else {
-        if (!(addr_is_rom(uaddr) || addr_is_mem(uaddr) || addr_is_io(uaddr))) {
+        if (addr_is_rom(uaddr) || addr_is_mem(uaddr)) {
+            *vptr = (uint32) pread_b(uaddr);
+            return SCPE_OK;
+        } else {
             *vptr = 0;
             return SCPE_NXM;
         }
-        *vptr = (uint32) pread_b(uaddr);
-        return SCPE_OK;
     }
 }
 
@@ -587,17 +661,22 @@ t_stat cpu_dep(t_value val, t_addr addr, UNIT *uptr, int32 sw)
     if (sw & EX_V_FLAG) {
         return deposit(uaddr, (uint8) val);
     } else {
-        if (!(addr_is_rom(uaddr) || addr_is_mem(uaddr) || addr_is_io(uaddr))) {
+        if (addr_is_mem(uaddr)) {
+            pwrite_b(uaddr, (uint8) val);
+            return SCPE_OK;
+        } else {
             return SCPE_NXM;
         }
-        pwrite_b(uaddr, (uint8) val);
-        return SCPE_OK;
     }
 }
 
 t_stat cpu_reset(DEVICE *dptr)
 {
     int i;
+
+    /* Link in our special "boot" command so we can boot with both
+     * "BO{OT}" and "BO{OT} CPU" */
+    sim_vm_cmd = sys_cmd;
 
     if (!sim_is_running) {
         /* Clear registers */
@@ -725,7 +804,196 @@ t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
     return SCPE_OK;
 }
 
-void fprint_sym_m(FILE *st, instr *ip)
+t_stat fprint_sym_m(FILE *of, t_addr addr, t_value *val)
+{
+    uint8 desc, mode, reg, etype;
+    uint32 w;
+    int32 vp, inst, i;
+    mnemonic *mn;
+    char reg_name[8];
+
+    mn = NULL;
+    vp = 0;
+    etype = -1;
+
+    inst = (int32) val[vp++];
+
+    if (inst == 0x30) {
+        /* Scan to find opcode */
+        inst = 0x3000 | (int8) val[vp++];
+        for (i = 0; i < HWORD_OP_COUNT; i++) {
+            if (hword_ops[i].opcode == inst) {
+                mn = &hword_ops[i];
+                break;
+            }
+        }
+    } else {
+        mn = &ops[inst];
+    }
+
+    if (mn == NULL) {
+        fprintf(of, "???");
+        return -(vp - 1);
+    }
+
+    fprintf(of, "%s", mn->mnemonic);
+
+    for (i = 0; i < mn->op_count; i++) {
+
+        /* Special cases for non-descriptor opcodes */
+        if (mn->mode == OP_BYTE) {
+            mode = 6;
+            reg = 15;
+        } else if (mn->mode == OP_HALF) {
+            mode = 5;
+            reg = 15;
+        } else if (mn->mode == OP_COPR) {
+            mode = 4;
+            reg = 15;
+        } else {
+            desc = (uint8) val[vp++];
+            mode = (desc >> 4) & 0xf;
+            reg = desc & 0xf;
+
+            /* Find the expanded data type, if any */
+            if (mode == 14 &&
+                (reg == 0 || reg == 2 || reg == 3 ||
+                 reg == 4 || reg == 6 || reg == 7)) {
+                etype = reg;
+                /* The real descriptor byte lies one ahead */
+                desc = (uint8) val[vp++];
+                mode = (desc >> 4) & 0xf;
+                reg = desc & 0xf;
+            }
+        }
+
+        fputc(i ? ',' : ' ', of);
+
+        switch (etype) {
+        case 0:
+            fprintf(of, "{uword}");
+            break;
+        case 2:
+            fprintf(of, "{uhalf}");
+            break;
+        case 3:
+            fprintf(of, "{ubyte}");
+            break;
+        case 4:
+            fprintf(of, "{word}");
+            break;
+        case 6:
+            fprintf(of, "{half}");
+            break;
+        case 7:
+            fprintf(of, "{sbyte}");
+            break;
+        default:
+            /* do nothing */
+            break;
+        }
+
+        switch(mode) {
+        case 0:  /* Positive Literal */
+        case 1:  /* Positive Literal */
+        case 2:  /* Positive Literal */
+        case 3:  /* Positive Literal */
+        case 15: /* Negative Literal */
+            fprintf(of, "&%d", desc);
+            break;
+        case 4:  /* Halfword Immediate, Register Mode */
+            switch (reg) {
+            case 15: /* Word Immediate */
+                OP_R_W(w, val, vp);
+                fprintf(of, "&0x%x", w);
+                break;
+            default: /* Register Mode */
+                cpu_register_name(reg, reg_name, 8);
+                fprintf(of, "%s", reg_name);
+                break;
+            }
+            break;
+        case 5:  /* Halfword Immediate, Register Deferred */
+            switch (reg) {
+            case 15:
+                OP_R_H(w, val, vp);
+                fprintf(of, "&0x%x", w);
+                break;
+            default:
+                cpu_register_name(reg, reg_name, 8);
+                fprintf(of, "(%s)", reg_name);
+                break;
+            }
+            break;
+        case 6:  /* Byte Immediate, FP Short Offset */
+            switch (reg) {
+            case 15:
+                OP_R_B(w, val, vp);
+                fprintf(of, "&0x%x", w);
+                break;
+            default:
+                fprintf(of, "%d(%%fp)", reg);
+                break;
+            }
+            break;
+        case 7:  /* Absolute, AP Short Offset */
+            switch (reg) {
+            case 15:
+                OP_R_W(w, val, vp);
+                fprintf(of, "$0x%x", w);
+                break;
+            default:
+                fprintf(of, "%d(%%ap)", reg);
+                break;
+            }
+            break;
+        case 8:   /* Word Displacement */
+            OP_R_W(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "0x%x(%s)", w, reg_name);
+            break;
+        case 9:   /* Word Displacement Deferred */
+            OP_R_W(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "*0x%x(%s)", w, reg_name);
+            break;
+        case 10:  /* Halfword Displacement */
+            OP_R_H(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "0x%x(%s)", w, reg_name);
+            break;
+        case 11:  /* Halfword Displacement Deferred */
+            OP_R_H(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "*0x%x(%s)", w, reg_name);
+            break;
+        case 12:  /* Byte Displacement */
+            OP_R_B(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "%d(%s)", w, reg_name);
+            break;
+        case 13:  /* Byte Displacement Deferred */
+            OP_R_B(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "*%d(%s)", w, reg_name);
+            break;
+        case 14:
+            if (reg == 15) {
+                OP_R_W(w, val, vp);
+                fprintf(of, "*$0x%x", w);
+            }
+            break;
+        default:
+            fprintf(of, "<?>");
+            break;
+        }
+    }
+
+
+    return -(vp - 1);
+}
+
+void fprint_sym_hist(FILE *st, instr *ip)
 {
     int32 i;
 
@@ -748,6 +1016,34 @@ void fprint_sym_m(FILE *st, instr *ip)
         }
     }
 }
+
+t_stat cpu_show_virt(FILE *of, UNIT *uptr, int32 val, CONST void *desc)
+{
+    uint32 va, pa;
+    t_stat r;
+
+    const char *cptr = (const char *)desc;
+    if (cptr) {
+        va = (uint32) get_uint(cptr, 16, 0xffffffff, &r);
+        if (r == SCPE_OK) {
+            r = mmu_decode_va(va, 0, FALSE, &pa);
+            if (r == SCPE_OK) {
+                fprintf(of, "Virtual %08x = Physical %08x\n", va, pa);
+                return SCPE_OK;
+            } else {
+                fprintf(of, "Translation not possible for virtual address.\n");
+                return SCPE_ARG;
+            }
+        } else {
+            fprintf(of, "Illegal address format.\n");
+            return SCPE_ARG;
+        }
+    }
+
+    fprintf(of, "Address argument required.\n");
+    return SCPE_ARG;
+}
+
 
 t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
@@ -792,7 +1088,7 @@ t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
             if (ip->mn == NULL || ip->mn->op_count < 0) {
                 fprintf(st, "???");
             } else {
-                fprint_sym_m(st, ip);
+                fprint_sym_hist(st, ip);
                 if (ip->mn->op_count > 0 && ip->mn->mode == OP_DESC) {
                     fprintf(st, "\n                            ");
                     for (j = 0; j < (uint32) ip->mn->op_count; j++) {
@@ -934,7 +1230,7 @@ void cpu_show_operand(FILE *st, operand *op)
         }
         break;
     case 15:
-        fprintf(st, "&%d", (int32)op->embedded.w);
+        fprintf(st, "&0x%x", (int32)op->embedded.w);
         break;
     }
 }
@@ -987,18 +1283,13 @@ static SIM_INLINE void clear_instruction(instr *inst)
 
 /*
  * Decode a single descriptor-defined operand from the instruction
- * stream. Returns the number of bytes consumed during decode.
+ * stream. Returns the number of bytes consumed during decode.type
  */
-static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
+static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number, int8 *etype)
 {
     uint8 desc;
     uint8 offset = 0;
     operand *oper = &instr->operands[op_number];
-
-    /* Set the default data type if none is already set */
-    if (cpu_dtype == -1) {
-        cpu_dtype = instr->mn->dtype;
-    }
 
     /* Read in the descriptor byte */
     desc = read_b(pa + offset++, ACC_OF);
@@ -1006,7 +1297,7 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
     oper->mode = (desc >> 4) & 0xf;
     oper->reg = desc & 0xf;
     oper->dtype = instr->mn->dtype;
-    oper->etype = cpu_etype;
+    oper->etype = *etype;
 
     switch (oper->mode) {
     case 0:  /* Positive Literal */
@@ -1014,7 +1305,7 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
     case 2:  /* Positive Literal */
     case 3:  /* Positive Literal */
     case 15: /* Negative literal */
-        oper->embedded.b = (uint8)desc;
+        oper->embedded.b = desc;
         oper->data = oper->embedded.b;
         break;
     case 4:  /* Word Immediate, Register Mode */
@@ -1108,9 +1399,9 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
         case 7: /* Expanded Datatype */
             /* Recursively decode the remainder of the operand after
                storing the expanded datatype */
-            cpu_etype = (int8) oper->reg;
-            oper->etype = cpu_etype;
-            offset += decode_operand(pa + offset, instr, op_number);
+            *etype = (int8) oper->reg;
+            oper->etype = *etype;
+            offset += decode_operand(pa + offset, instr, op_number, etype);
             break;
         default:
             cpu_abort(NORMAL_EXCEPTION, RESERVED_DATATYPE);
@@ -1132,9 +1423,9 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
  *      the opcode type.
  *   3. Fetch each opcode from main memory.
  *
- * This routine may alter the PSW's ET (Exception Type) and
- * ISC (Internal State Code) registers if an exceptional condition
- * is encountered during decode.
+ * This routine is guaranteed not to change state.
+ *
+ * returns: a Normal Exception if an error occured, or 0 on success.
  */
 uint8 decode_instruction(instr *instr)
 {
@@ -1144,6 +1435,9 @@ uint8 decode_instruction(instr *instr)
     uint32 pa;
     mnemonic *mn = NULL;
     int i;
+    int8 etype = -1;  /* Expanded datatype (if any) */
+
+    clear_instruction(instr);
 
     pa = R[NUM_PC];
 
@@ -1151,10 +1445,6 @@ uint8 decode_instruction(instr *instr)
     instr->psw = R[NUM_PSW];
     instr->sp  = R[NUM_SP];
     instr->pc  = pa;
-
-    /* Reset our data types */
-    cpu_etype = -1;
-    cpu_dtype = -1;
 
     if (read_operand(pa + offset++, &b1) != SCPE_OK) {
         /* We tried to read out of a page that doesn't exist. We
@@ -1220,13 +1510,13 @@ uint8 decode_instruction(instr *instr)
 
         /* Decode subsequent operands */
         for (i = 1; i < mn->op_count; i++) {
-            offset += decode_operand(pa + offset, instr, (uint8) i);
+            offset += decode_operand(pa + offset, instr, (uint8) i, &etype);
         }
 
         break;
     case OP_DESC:
         for (i = 0; i < mn->op_count; i++) {
-            offset += decode_operand(pa + offset, instr, (uint8) i);
+            offset += decode_operand(pa + offset, instr, (uint8) i, &etype);
         }
         break;
     }
@@ -1310,10 +1600,13 @@ static SIM_INLINE void cpu_context_switch_1(uint32 new_pcbp)
     }
 }
 
-t_bool cpu_on_interrupt(uint8 ipl)
+void cpu_on_interrupt(uint16 vec)
 {
     uint32 new_pcbp;
-    uint16 id = ipl; /* TODO: Does this need to be uint16? */
+
+    sim_debug(IRQ_MSG, &cpu_dev,
+              "[%08x] [cpu_on_interrupt] vec=%02x (%d)\n",
+              R[NUM_PC], vec, vec);
 
     /*
      * "If a nonmaskable interrupt request is received, an auto-vector
@@ -1322,7 +1615,7 @@ t_bool cpu_on_interrupt(uint8 ipl)
      * Interrupt-ID is fetched. The value 0 is used as the ID."
      */
     if (cpu_nmi) {
-        id = 0;
+        vec = 0;
     }
 
     cpu_km = TRUE;
@@ -1330,10 +1623,11 @@ t_bool cpu_on_interrupt(uint8 ipl)
     if (R[NUM_PSW] & PSW_QIE_MASK) {
         /* TODO: Maybe implement quick interrupts at some point, but
            the 3B2 ROM and SVR3 don't appear to use them. */
-        assert(0);
+        stop_reason = STOP_ERR;
+        return;
     }
 
-    new_pcbp = read_w(0x8c + (4 * id), ACC_AF);
+    new_pcbp = read_w(0x8c + (4 * vec), ACC_AF);
 
     /* Save the old PCBP */
     irq_push_word(R[NUM_PCBP]);
@@ -1354,8 +1648,6 @@ t_bool cpu_on_interrupt(uint8 ipl)
     cpu_context_switch_3(new_pcbp);
 
     cpu_km = FALSE;
-
-    return TRUE;
 }
 
 t_stat sim_instr(void)
@@ -1371,6 +1663,9 @@ t_stat sim_instr(void)
     /* Used for field calculation */
     uint32   width, offset;
     uint32   mask;
+
+    /* Generic index */
+    uint32   i;
 
     operand *src1, *src2, *src3, *dst;
 
@@ -1480,9 +1775,24 @@ t_stat sim_instr(void)
             increment_modep_b();
         }
 
-        /* Process pending IRQ, if applicable */
-        if (PSW_CUR_IPL < cpu_ipl()) {
-            cpu_on_interrupt(cpu_ipl());
+        /* Set the correct IRQ state */
+        cpu_calc_ints();
+
+        if (PSW_CUR_IPL < cpu_int_ipl) {
+            cpu_on_interrupt(cpu_int_vec);
+            for (i = 0; i < CIO_SLOTS; i++) {
+                if (cio[i].intr &&
+                    cio[i].ipl == cpu_int_ipl &&
+                    cio[i].ivec == cpu_int_vec) {
+                    sim_debug(IO_DBG, &cpu_dev,
+                              "[%08x] [IRQ] Handling CIO interrupt for card %d\n",
+                              R[NUM_PC], i);
+
+                    cio[i].intr = FALSE;
+                }
+            }
+            cpu_int_ipl = 0;
+            cpu_int_vec = 0;
             cpu_nmi = FALSE;
             cpu_in_wait = FALSE;
         }
@@ -1506,7 +1816,6 @@ t_stat sim_instr(void)
         }
 
         /* Decode the instruction */
-        clear_instruction(cpu_instr);
         pc_incr = decode_instruction(cpu_instr);
 
         /* Make sure to update the valid bit for history keeping (if
@@ -2065,9 +2374,8 @@ t_stat sim_instr(void)
             break;
         case GATE:
             cpu_km = TRUE;
-            abort_context = C_PROCESS_GATE_PCB;
             if (R[NUM_SP] < read_w(R[NUM_PCBP] + 12, ACC_AF) ||
-                R[NUM_SP] >= read_w(R[NUM_PCBP] + 16, ACC_AF)) {
+                R[NUM_SP] > read_w(R[NUM_PCBP] + 16, ACC_AF)) {
                 sim_debug(EXECUTE_MSG, &cpu_dev,
                           "[%08x] STACK OUT OF BOUNDS IN GATE. "
                           "SP=%08x, R[NUM_PCBP]+12=%08x, "
@@ -2495,7 +2803,6 @@ t_stat sim_instr(void)
         case SPOPWT:
             /* Memory fault is signaled when no support processor is
                active */
-            csr_data |= CSRTIMO;
             cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
             break;
         case SUBW2:
@@ -2729,12 +3036,9 @@ static SIM_INLINE void cpu_on_normal_exception(uint8 isc)
               "[%08x] [cpu_on_normal_exception %d] %%sp=%08x abort_context=%d\n",
               R[NUM_PC], isc, R[NUM_SP], abort_context);
 
-    abort_context = C_PROCESS_GATE_PCB;
-
     cpu_km = TRUE;
-
     if (R[NUM_SP] < read_w(R[NUM_PCBP] + 12, ACC_AF) ||
-        R[NUM_SP] >= read_w(R[NUM_PCBP] + 16, ACC_AF)) {
+        R[NUM_SP] > read_w(R[NUM_PCBP] + 16, ACC_AF)) {
         sim_debug(EXECUTE_MSG, &cpu_dev,
                   "[%08x] STACK OUT OF BOUNDS IN EXCEPTION HANDLER. "
                   "SP=%08x, R[NUM_PCBP]+12=%08x, "
@@ -2743,10 +3047,8 @@ static SIM_INLINE void cpu_on_normal_exception(uint8 isc)
                   R[NUM_SP],
                   read_w(R[NUM_PCBP] + 12, ACC_AF),
                   read_w(R[NUM_PCBP] + 16, ACC_AF));
-        abort_context = C_NONE;
         cpu_abort(STACK_EXCEPTION, STACK_BOUND);
     }
-
     cpu_km = FALSE;
 
     /* Set context for STACK (FAULT) */
@@ -2961,7 +3263,9 @@ static uint32 cpu_read_op(operand * op)
             data = sign_extend_b(R[op->reg] & BYTE_MASK);
             break;
         default:
-            assert(0);
+            stop_reason = STOP_ERR;
+            data = 0;
+            break;
         }
 
         op->data = data;
@@ -3023,7 +3327,7 @@ static uint32 cpu_read_op(operand * op)
         op->data = data;
         return data;
     default:
-        assert(0);
+        stop_reason = STOP_ERR;
         return 0;
     }
 }
@@ -3071,66 +3375,49 @@ static void cpu_write_op(operand * op, t_uint64 val)
         break;
     case HW:
     case UH:
-        if (val > HALF_MASK) {
-            cpu_set_v_flag(TRUE);
-        }
         write_h(eff, val & HALF_MASK);
         break;
     case SB:
     case BT:
-        if (val > BYTE_MASK) {
-            cpu_set_v_flag(TRUE);
-        }
         write_b(eff, val & BYTE_MASK);
         break;
     default:
-        assert(0);
+        stop_reason = STOP_ERR;
+        break;
     }
 }
 
 /*
- * This returns the current state of the IPL (Interrupt
- * Priority Level) bus. This is affected by:
- *
- *  - Latched values in the CSR for:
- *    o CSRCLK     15
- *    o CSRDMA     13
- *    o CSRUART    13
- *    o CSRDISK    11
- *    o CSRPIR9    9
- *    o CSRPIR8    8
- *  - IRQ currently enabled for:
- *    o HD Ctlr.   11
+ * Calculate the current state of interrupts.
+ * TODO: This could use a refactor. It's getting code-smelly.
  */
-static SIM_INLINE uint8 cpu_ipl()
+static void cpu_calc_ints()
 {
-    /* CSRPIR9 is cleared by writing to c_pir8 */
+    uint32 i;
+
+    /* First scan for a CIO interrupt */
+    for (i = 0; i < CIO_SLOTS; i++) {
+        if (cio[i].intr) {
+            cpu_int_ipl = cio[i].ipl;
+            cpu_int_vec = cio[i].ivec;
+            return;
+        }
+    }
+
+    /* If none was found, look for system board interrupts */
     if (csr_data & CSRPIR8) {
-        return 8;
+        cpu_int_ipl = cpu_int_vec = CPU_PIR8_IPL;
+    } else if (csr_data & CSRPIR9) {
+        cpu_int_ipl = cpu_int_vec = CPU_PIR9_IPL;
+    } else if (id_int() || (csr_data & CSRDISK)) {
+        cpu_int_ipl = cpu_int_vec = CPU_ID_IF_IPL;
+    } else if ((csr_data & CSRUART) || (csr_data & CSRDMA)) {
+        cpu_int_ipl = cpu_int_vec = CPU_IU_DMA_IPL;
+    } else if (csr_data & CSRCLK) {
+        cpu_int_ipl = cpu_int_vec = CPU_TMR_IPL;
+    } else {
+        cpu_int_ipl = cpu_int_vec = 0;
     }
-
-    /* CSRPIR9 is cleared by writing to c_pir9 */
-    if (csr_data & CSRPIR9) {
-        return 9;
-    }
-
-    /* CSRDISK is cleared when the floppy "if_irq" goes low */
-    if (id_int() || (csr_data & CSRDISK)) {
-        return 11;
-    }
-
-    /* CSRDMA is cleared by write/read to 0x49011 */
-    /* CSRUART is cleared when the uart "iu_irq" goes low */
-    if ((csr_data & CSRUART) || (csr_data & CSRDMA)) {
-        return 13;
-    }
-
-    /* CSRCLK is cleared by $clrclkint */
-    if (csr_data & CSRCLK) {
-        return 15;
-    }
-
-    return 0;
 }
 
 /*

@@ -78,10 +78,10 @@
 #if !defined (DZ_MUXES)
 #define DZ_MUXES        1
 #endif
-#if !defined (DZ_LINES)
-#define DZ_LINES        8
-#endif
+#if !defined (MAX_DZ_MUXES)
 #define MAX_DZ_MUXES    32
+#endif
+#define DZ_LINES        (UNIBUS ? 8 : 4)                /* lines per DZ mux */
 
 #if DZ_MUXES > MAX_DZ_MUXES
 #error "Too many DZ multiplexers"
@@ -234,7 +234,7 @@ uint32 dz_txi = 0;                                      /* xmt interrupts */
 int32 dz_mctl = 0;                                      /* modem ctrl enabled */
 int32 dz_auto = 0;                                      /* autodiscon enabled */
 TMLN *dz_ldsc = NULL;                                   /* line descriptors */
-TMXR dz_desc = { DZ_MUXES * DZ_LINES, 0, 0, NULL };     /* mux descriptor */
+TMXR dz_desc = { 0, 0, 0, NULL };                       /* mux descriptor */
 
 /* debugging bitmaps */
 #define DBG_REG  0x0001                                 /* trace read/write registers */
@@ -277,6 +277,7 @@ void dz_clr_rxint (int32 dz);
 void dz_set_rxint (int32 dz);
 void dz_clr_txint (int32 dz);
 void dz_set_txint (int32 dz);
+t_stat dz_show_vec (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat dz_setnl (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat dz_set_log (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat dz_set_nolog (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
@@ -302,7 +303,8 @@ DIB dz_dib = {
 
 UNIT dz_unit[2] = {
         { UDATA (&dz_svc, UNIT_IDLE|UNIT_ATTABLE|DZ_8B_DFLT, 0) },
-        { UDATA (&dz_xmt_svc, UNIT_DIS, 0), SERIAL_OUT_WAIT } };
+        { UDATA (&dz_xmt_svc, UNIT_DIS, 0) }
+    };
 
 REG dz_reg[] = {
     { BRDATADF (CSR,   dz_csr,   DEV_RDX, 16, MAX_DZ_MUXES, "control/status register", dz_csr_bits) },
@@ -336,8 +338,8 @@ MTAB dz_mod[] = {
         NULL, &tmxr_show_cstat, (void *) &dz_desc, "Display multiplexer statistics" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 010, "ADDRESS", "ADDRESS",
         &set_addr, &show_addr, NULL, "Bus address" },
-    { MTAB_XTD|MTAB_VDV|MTAB_VALR, DZ_LINES, "VECTOR", "VECTOR",
-        &set_vec, &show_vec_mux, (void *) &dz_desc, "Interrupt vector" },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "VECTOR", "VECTOR",
+        &set_vec, &dz_show_vec, (void *) &dz_desc, "Interrupt vector" },
 #if !defined (VM_PDP10)
     { MTAB_XTD|MTAB_VDV, 0, NULL, "AUTOCONFIGURE",
         &set_addr_flt, NULL, NULL, "Enable autoconfiguration of address & vector" },
@@ -531,9 +533,11 @@ switch ((PA >> 1) & 03) {                               /* case on PA<2:1> */
             line = (dz * DZ_LINES) + CSR_GETTL (dz_csr[dz]);
             lp = &dz_ldsc[line];                        /* get line desc */
             c = sim_tt_outcvt (dz_tdr[dz], TT_GET_MODE (dz_unit[0].flags));
-            if (c >= 0)                                 /* store char */
+            if (c >= 0) {                               /* store char */
                 tmxr_putc_ln (lp, c);
-            sim_activate (&dz_unit[1], dz_unit[1].wait);/* */
+                dz_update_xmti ();
+                sim_activate_after_abs (&dz_unit[1], lp->txdelta);/* */
+                }
             }
         break;
         }
@@ -670,8 +674,9 @@ for (dz = 0; dz < dz_desc.lines/DZ_LINES; dz++) {       /* loop thru muxes */
             }
         }
     if ((dz_csr[dz] & CSR_TIE) && (dz_csr[dz] & CSR_TRDY)) /* ready plus int? */
-         dz_set_txint (dz);
-    else dz_clr_txint (dz);                             /* no int req */
+        dz_set_txint (dz);
+    else
+        dz_clr_txint (dz);                              /* no int req */
     }
 return;
 }
@@ -776,15 +781,26 @@ int32 i, ndev;
 
 sim_debug(DBG_TRC, dptr, "dz_reset()\n");
 
-if (dz_ldsc == NULL)
+if (dz_ldsc == NULL) {
+    dz_desc.lines = DZ_MUXES * DZ_LINES;
     dz_desc.ldsc = dz_ldsc = (TMLN *)calloc (dz_desc.lines, sizeof(*dz_ldsc));
+    }
+if ((dz_desc.lines % DZ_LINES) != 0) {      /* Transition from Qbus to Unibus device */
+    int32 newln = DZ_LINES * (1 + (dz_desc.lines / DZ_LINES));
+
+    dz_desc.ldsc = dz_ldsc = (TMLN *)realloc(dz_ldsc, newln*sizeof(*dz_ldsc));
+    memset (dz_ldsc + dz_desc.lines, 0, sizeof(*dz_ldsc)*(newln-dz_desc.lines));
+    dz_desc.lines = newln;
+    }
+tmxr_set_port_speed_control (&dz_desc);
 for (i = 0; i < dz_desc.lines/DZ_LINES; i++)            /* init muxes */
     dz_clear (i, TRUE);
 dz_rxi = dz_txi = 0;                                    /* clr master int */
 CLR_INT (DZRX);
 CLR_INT (DZTX);
-sim_cancel (dz_unit);                                  /* stop poll */
+sim_cancel (dz_unit);                                   /* stop poll */
 ndev = ((dptr->flags & DEV_DIS)? 0: (dz_desc.lines / DZ_LINES));
+dz_dib.lnt = ndev * IOLN_DZ;                            /* set length */
 return auto_config (dptr->name, ndev);                  /* auto config */
 }
 
@@ -792,11 +808,13 @@ return auto_config (dptr->name, ndev);                  /* auto config */
 
 t_stat dz_attach (UNIT *uptr, CONST char *cptr)
 {
-int32 dz, muxln;
+int32 dz, muxln, ln;
 t_stat r;
 
 if ((sim_switches & SWMASK ('M')) || dz_mctl)           /* modem control? */
     tmxr_set_modem_control_passthru (&dz_desc);
+for (ln = 0; ln < dz_desc.lines; ln++)
+    tmxr_set_line_output_unit (&dz_desc, ln, &dz_unit[1]);
 r = tmxr_attach (&dz_desc, uptr, cptr);                 /* attach mux */
 if (r != SCPE_OK) {                                     /* error? */
     tmxr_clear_modem_control_passthru (&dz_desc);
@@ -835,6 +853,14 @@ dz_mctl = dz_auto = 0;                                  /* modem ctl off */
 tmxr_clear_modem_control_passthru (&dz_desc);
 return r;
 }
+
+t_stat dz_show_vec (FILE *st, UNIT *uptr, int32 arg, CONST void *desc)
+{
+const TMXR *mp = (const TMXR *) desc;
+
+return show_vec (st, uptr, ((mp->lines * 2) / DZ_LINES), desc);
+}
+
 
 /* SET LINES processor */
 

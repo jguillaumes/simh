@@ -29,20 +29,17 @@
 */
 
 #include "3b2_if.h"
-#include <assert.h>
 
 /*
  * TODO: Macros used for debugging timers. Remove when debugging is complete.
  */
 double if_start_time;
 
-#define IF_START_TIME() { if_start_time = sim_gtime(); }
-#define IF_DIFF_MS()    ((sim_gtime() - if_start_time) / INST_PER_MS)
-#ifndef max
-#define max(x,y) ((x) > (y) ? (x) : (y))
+#ifndef MAX
+#define MAX(x,y) ((x) > (y) ? (x) : (y))
 #endif
-#ifndef min
-#define min(x,y) ((x) < (y) ? (x) : (y))
+#ifndef MIN
+#define MIN(x,y) ((x) < (y) ? (x) : (y))
 #endif
 
 /*
@@ -56,16 +53,14 @@ double if_start_time;
  *
  * 80 * 9 * 2 * 512 = 720KB
  *
- * The clock on pin 24 runs at 1.000 MHz, meaning that each
- * step is 6ms and head settling time is 30ms.
  */
 
-#define IF_STEP_DELAY       6     /* ms */
-#define IF_R_DELAY          85    /* ms */
-#define IF_W_DELAY          90    /* ms */
-#define IF_VERIFY_DELAY     30    /* ms */
-#define IF_HLD_DELAY        80    /* ms */
-#define IF_HSW_DELAY        60    /* ms */
+#define IF_STEP_DELAY       3000     /* us */
+#define IF_R_DELAY          65000    /* us */
+#define IF_W_DELAY          70000    /* us */
+#define IF_VERIFY_DELAY     20000    /* us */
+#define IF_HLD_DELAY        60000    /* us */
+#define IF_HSW_DELAY        40000    /* us */
 
 UNIT if_unit = {
     UDATA (&if_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_BUFABLE+
@@ -104,8 +99,7 @@ static SIM_INLINE void if_clear_irq()
 
 static SIM_INLINE void if_activate(uint32 delay)
 {
-    IF_START_TIME();
-    sim_activate_abs(&if_unit, (int32) DELAY_MS(delay));
+    sim_activate_abs(&if_unit, delay);
 }
 
 static SIM_INLINE void if_cancel_pending_irq()
@@ -132,7 +126,7 @@ t_stat if_svc(UNIT *uptr)
     if_state.cmd = 0;
 
     /* Request an interrupt */
-    sim_debug(IRQ_MSG, &if_dev, "\tINTR\t\tDELTA=%f ms\n", IF_DIFF_MS());
+    sim_debug(IRQ_MSG, &if_dev, "\tINTR\n");
     if_set_irq();
 
     return SCPE_OK;
@@ -323,20 +317,20 @@ void if_handle_command()
     case IF_STEP_T:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tStep\n", if_state.cmd);
         if_activate(IF_STEP_DELAY);
-        if_state.track = (uint8) min(max((int) if_state.track + if_state.step_dir, 0), 0x4f);
+        if_state.track = (uint8) MIN(MAX((int) if_state.track + if_state.step_dir, 0), 0x4f);
         break;
     case IF_STEP_IN:
     case IF_STEP_IN_T:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tStep In\n", if_state.cmd);
         if_state.step_dir = IF_STEP_IN_DIR;
-        if_state.track = (uint8) max((int) if_state.track + if_state.step_dir, 0);
+        if_state.track = (uint8) MAX((int) if_state.track + if_state.step_dir, 0);
         if_activate(IF_STEP_DELAY);
         break;
     case IF_STEP_OUT:
     case IF_STEP_OUT_T:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tStep Out\n", if_state.cmd);
         if_state.step_dir = IF_STEP_OUT_DIR;
-        if_state.track = (uint8) min((int) if_state.track + if_state.step_dir, 0x4f);
+        if_state.track = (uint8) MIN((int) if_state.track + if_state.step_dir, 0x4f);
         if_activate(IF_STEP_DELAY);
         break;
     case IF_SEEK:
@@ -397,7 +391,12 @@ void if_handle_command()
         }
         break;
     case IF_READ_SEC_M:
-        assert(0);
+        /* Not yet implemented. Halt the emulator. */
+        sim_debug(EXECUTE_MSG, &if_dev,
+                  "\tCOMMAND\t%02x\tRead Sector (Multi) - NOT IMPLEMENTED\n",
+                  if_state.cmd);
+        stop_reason = STOP_ERR;
+        break;
     case IF_WRITE_SEC:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tWrite Sector %d/%d/%d\n",
                   if_state.cmd, if_state.track, if_state.side, if_state.sector);
@@ -411,7 +410,11 @@ void if_handle_command()
         }
         break;
     case IF_WRITE_SEC_M:
-        assert(0);
+        /* Not yet implemented. Halt the emulator. */
+        sim_debug(EXECUTE_MSG, &if_dev,
+                  "\tCOMMAND\t%02x\tWrite Sector (Multi) - NOT IMPLEMENTED\n",
+                  if_state.cmd);
+        stop_reason = STOP_ERR;
         break;
     case IF_READ_ADDR:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tRead Address\n", if_state.cmd);
@@ -421,7 +424,8 @@ void if_handle_command()
         break;
     case IF_READ_TRACK:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tRead Track\n", if_state.cmd);
-        assert(0); /* NOT YET IMPLEMENTED */
+        /* Not yet implemented. Halt the emulator. */
+        stop_reason = STOP_ERR;
         break;
     case IF_WRITE_TRACK:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tWrite Track\n", if_state.cmd);
@@ -532,7 +536,8 @@ static SIM_INLINE uint32 if_buf_offset()
     return pos;
 }
 
-void if_drq_handled()
+void if_after_dma()
 {
+    if_state.drq = FALSE;
     if_state.status &= ~IF_DRQ;
 }

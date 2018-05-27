@@ -193,6 +193,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\3B2\3b2_ctc.c"
+				>
+			</File>
+			<File
 				RelativePath="..\3B2\3b2_dmac.c"
 				>
 			</File>
@@ -214,6 +218,10 @@
 			</File>
 			<File
 				RelativePath="..\3B2\3b2_mmu.c"
+				>
+			</File>
+			<File
+				RelativePath="..\3B2\3b2_ports.c"
 				>
 			</File>
 			<File
@@ -278,6 +286,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\3B2\3b2_ctc.h"
+				>
+			</File>
+			<File
 				RelativePath="..\3B2\3b2_defs.h"
 				>
 			</File>
@@ -303,6 +315,10 @@
 			</File>
 			<File
 				RelativePath="..\3B2\3b2_mmu.h"
+				>
+			</File>
+			<File
+				RelativePath="..\3B2\3b2_ports.h"
 				>
 			</File>
 			<File

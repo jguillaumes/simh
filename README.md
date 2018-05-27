@@ -1,18 +1,21 @@
-# SIMH v4.0 - Beta                   [![Coverity Scan Build Status](https://scan.coverity.com/projects/11982/badge.svg)](https://scan.coverity.com/projects/simh)
+# SIMH v4.0 - Current
+
+[![Coverity Scan Build Status](https://scan.coverity.com/projects/11982/badge.svg)](https://scan.coverity.com/projects/simh)
+[![Build Status](https://travis-ci.org/simh/simh.svg)](https://travis-ci.org/simh/simh)
 
 ## Table of Contents:
-[WHAT'S NEW](#whats-new)  
+[WHAT'S NEW since simh v3.9](#whats-new-since-simh-v39)  
 . . [New Simulators](#new-simulators)  
 . . [Simulator Front Panel API](#simulator-front-panel-api)  
 . . [New Functionality](#new-functionality)  
 . . . . [Remote Console Facility](#remote-console-facility)  
-. . . . [VAX/PDP11 Enhancements](#vax-pdp11-enhancements)  
+. . . . [VAX/PDP11 Enhancements](#vaxpdp11-enhancements)  
 . . . . [PDP10 Enhancements](#pdp10-enhancements)  
 . . . . [SDS 940 Enhancements](#sds-940-enhancements)  
 . . . . [Terminal Multiplexer additions](#terminal-multiplexer-additions)  
 . . . . [Video Display Capabilities](#video-display-capabilities)  
 . . . . [Asynchronous I/O](#asynchronous-io)  
-. . . . [Clock/Timer Enhancements](#clock-timer-enhancements)  
+. . . . [Clock/Timer Enhancements](#clocktimer-enhancements)  
 . . . . [Ethernet Transport Enhancements](#ethernet-transport-enhancements)  
 . . . . [Disk Extensions](#disk-extensions)  
 . . . . [Embedded ROM support](#embedded-rom-support)  
@@ -21,17 +24,17 @@
 . . . . [Help](#help)  
 . . . . [Generic SCP support Clock Coscheduling as opposed to per simulator implementations](#generic-scp-support-clock-coscheduling-as-opposed-to-per-simulator-implementations)  
 . . . . [New SCP Commands](#new-scp-commands)  
-. . . . [Command Processing Enhancements](#command-[rocessing-enhancements)  
+. . . . [Command Processing Enhancements](#command-processing-enhancements)  
 . . . . . . [Environment variable insertion](#environment-variable-insertion)  
 . . . . . . [Command aliases](#command-aliases)  
 . . . . . . [Do command argument manipulation](#do-command-argument-manipulation)  
 . . [Building and running a simulator](#building-and-running-a-simulator)  
-. . . . [Use Prebuilt Windows Simulators](#use-prebuilt-sindows-simulators)  
+. . . . [Use Prebuilt Windows Simulators](#use-prebuilt-windows-simulators)  
 . . . . [Building simulators yourself](#building-simulators-yourself)  
 . . . . . . [Linux/OSX other *nix platforms](#linuxosx-other-nix-platforms)  
 . . . . . . . . [Build Dependencies](#build-dependencies)  
-. . . . . . . . . . [OS X - Dependencies](#os-x--dependencies)  
-. . . . . . . . . . [Linux - Dependencies](#linux--dependencies)  
+. . . . . . . . . . [OS X - Dependencies](#os-x---dependencies)  
+. . . . . . . . . . [Linux - Dependencies](#linux---dependencies)  
 . . . . . . [Windows](#windows)  
 . . . . . . . . [Required related files](#required-related-files)  
 . . . . . . . . [Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015](#visual-studio-standard-or-express-2008-2010-2012-2013-or-visual-studio-community-2015)  
@@ -39,7 +42,7 @@
 . . . . . . [VMS](#vms)  
 . . [Problem Reports](#problem-reports)  
 
-## WHAT'S NEW
+## WHAT'S NEW since simh v3.9
 
 ### New Simulators
 
@@ -79,6 +82,8 @@
 #### CDC 1700 simulator from John Forecast
 
 #### Hans-Åke Lund has implemented an SCELBI (SCientic-ELectronics-BIology) simulator.
+
+#### Roberto Sancho has implemented an IBM 650 simulator.
 
 ### New Host Platform support - HP-UX and AIX
 
@@ -230,17 +235,16 @@ The following extensions to the SCP command language without affecting prior beh
                                  targets of goto's, they could be used to 
                                  provide comments in do command files, for 
                                  example (":: This is a comment")
+    RETURN {status}              Return from the current do command file 
+                                 execution with the specified status or
+                                 the status from the last executed command 
+                                 if no status is specified.  Status can be
+                                 a number or a SCPE_<conditionname> name 
+                                 string.
     SET ON                       Enables error trapping for currently defined 
                                  traps (by ON commands)
     SET NOON                     Disables error trapping for currently 
                                  defined traps (by ON commands)
-    RETURN                       Return from the current do command file 
-                                 execution with the status from the last 
-                                 executed command
-    RETURN <statusvalue>         Return from the current do command file 
-                                 execution with the indicated status.  Status 
-                                 can be a number or a SCPE_<conditionname> 
-                                 name string.
     ON <statusvalue> commandtoprocess{; additionalcommandtoprocess}
                                  Sets the action(s) to take when the specific 
                                  error status is returned by a command in the 
@@ -256,16 +260,25 @@ The following extensions to the SCP command language without affecting prior beh
                                  specified with each delimited by a semicolon 
                                  character (just like breakpoint action 
                                  commands).
-    ON <statusvalue>                   
+    ON CONTROL_C commandtoprocess{; additionalcommandtoprocess}
+                                 Specifies particular actions to perform when
+                                 the operator enters CTRL+C while a command
+                                 procedure is running.  The default action is 
+                                 to exit the current and any nested command 
+                                 procedures and return to the sim> input prompt.
+    ON <statusvalue>             Clears the action(s) to take when condition occurs
     ON ERROR                     Clears the default actions to take when any 
                                  otherwise unspecified error status is 
                                  returned by a command in the currently 
                                  running do command file.
+    ON CONTROL_C
+                                 Restores the default CTRL+C behavior for the
+                                 currently running command procedure.
 
 
 Error traps can be taken for any command which returns a status other than SCPE_STEP, SCPE_OK, and SCPE_EXIT.   
 
-ON Traps can specify any status value from the following list: NXM, UNATT, IOERR, CSUM, FMT, NOATT, OPENERR, MEM, ARG, STEP, UNK, RO, INCOMP, STOP, TTIERR, TTOERR, EOF, REL, NOPARAM, ALATT, TIMER, SIGERR, TTYERR, SUB, NOFNC, UDIS, NORO, INVSW, MISVAL, 2FARG, 2MARG, NXDEV, NXUN, NXREG, NXPAR, NEST, IERR, MTRLNT, LOST, TTMO, STALL, AFAIL.  These values can be indicated by name or by their internal numeric value (not recommended).
+ON Traps can specify any status value from the following list: NXM, UNATT, IOERR, CSUM, FMT, NOATT, OPENERR, MEM, ARG, STEP, UNK, RO, INCOMP, STOP, TTIERR, TTOERR, EOF, REL, NOPARAM, ALATT, TIMER, SIGERR, TTYERR, SUB, NOFNC, UDIS, NORO, INVSW, MISVAL, 2FARG, 2MARG, NXDEV, NXUN, NXREG, NXPAR, NEST, IERR, MTRLNT, LOST, TTMO, STALL, AFAIL, NOTATT, AMBREG.  These values can be indicated by name or by their internal numeric value (not recommended).
 
 Interactions with ASSERT command and "DO -e":
 
@@ -315,6 +328,7 @@ Device simulator authors can easily schedule their device polling activities to 
     SCREENSHOT filename.bmp          Save video window to the specified file
     SET ENV Name=Value               Set Environment variable
     SET ENV -p "Prompt" Name=Default Gather User input into an Environment Variable
+    SET ENV -a Name=Expression       Evaluate an expression and store result in an Environment Variable
     SET ASYNCH                       Enable Asynchronous I/O
     SET NOASYNCH                     Disable Asynchronous I/O
     SET VERIFY                       Enable command display while processing DO command files
@@ -345,6 +359,7 @@ Device simulator authors can easily schedule their device polling activities to 
     NOOP                             A no-op command
     ON                               Establish or cancel an ON condition dispatch
     IF                               Test some simulator state and conditionally execute commands
+    IF (C-style-expression)          Test some simulator state and conditionally execute commands
     CD                               Change working directory
     SET DEFAULT                      Change working directory
     PWD                              Show working directory
