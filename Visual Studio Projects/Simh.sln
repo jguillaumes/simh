@@ -269,6 +269,9 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "3B2", "3B2.vcproj", "{56178
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "I701", "I701.vcproj", "{F1F44607-FB9E-428C-AD8F-56F98699D121}"
+	ProjectSection(ProjectDependencies) = postProject
+		{D40F3AF1-EEE7-4432-9807-2AD287B490F8} = {D40F3AF1-EEE7-4432-9807-2AD287B490F8}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "I7090", "I7090.vcproj", "{33EE34FC-A12F-47FE-9FD6-8B74D08718C7}"
 	ProjectSection(ProjectDependencies) = postProject
@@ -296,6 +299,11 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "I7010", "I7010.vcproj", "{5
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "I650", "I650.vcproj", "{95B64699-4B93-4BFE-9024-0A2302D9B71A}"
+	ProjectSection(ProjectDependencies) = postProject
+		{D40F3AF1-EEE7-4432-9807-2AD287B490F8} = {D40F3AF1-EEE7-4432-9807-2AD287B490F8}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "UC15", "UC15.vcproj", "{B5E9D32E-53F9-4C9B-B037-5A2D34E370CF}"
 	ProjectSection(ProjectDependencies) = postProject
 		{D40F3AF1-EEE7-4432-9807-2AD287B490F8} = {D40F3AF1-EEE7-4432-9807-2AD287B490F8}
 	EndProjectSection
@@ -550,6 +558,10 @@ Global
 		{95B64699-4B93-4BFE-9024-0A2302D9B71A}.Debug|Win32.Build.0 = Debug|Win32
 		{95B64699-4B93-4BFE-9024-0A2302D9B71A}.Release|Win32.ActiveCfg = Release|Win32
 		{95B64699-4B93-4BFE-9024-0A2302D9B71A}.Release|Win32.Build.0 = Release|Win32
+		{B5E9D32E-53F9-4C9B-B037-5A2D34E370CF}.Debug|Win32.ActiveCfg = Debug|Win32
+		{B5E9D32E-53F9-4C9B-B037-5A2D34E370CF}.Debug|Win32.Build.0 = Debug|Win32
+		{B5E9D32E-53F9-4C9B-B037-5A2D34E370CF}.Release|Win32.ActiveCfg = Release|Win32
+		{B5E9D32E-53F9-4C9B-B037-5A2D34E370CF}.Release|Win32.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

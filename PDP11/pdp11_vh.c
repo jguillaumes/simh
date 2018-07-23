@@ -391,7 +391,7 @@ static uint32   vh_rxi = 0; /* rcv interrupts */
 static uint32   vh_txi = 0; /* xmt interrupts */
 static uint32   vh_crit = 0;/* FIFO.CRIT */
 
-static uint32   vh_wait = 0;                    /* input polling adjustment */
+static uint32   vh_wait = 50;                   /* input polling adjustment */
 
 static const int32 bitmask[4] = { 037, 077, 0177, 0377 };
 
@@ -417,6 +417,11 @@ typedef struct {
     uint16  tbuf1;
     uint16  tbuf2;
     uint16  txchar;     /* single character I/O */
+    uint16  txstate;    /* transmit state */
+#define TXS_IDLE        0
+#define TXS_PIO_START   1
+#define TXS_PIO_PENDING 2
+#define TXS_DMA_PENDING 3
 } TMLX;
 
 static TMLN vh_ldsc[VH_MUXES * VH_LINES_ALLOC] = { { 0 } };
@@ -430,6 +435,8 @@ static TMLX vh_parm[VH_MUXES * VH_LINES_ALLOC] = { { 0 } };
 #define DBG_INT     0x0004                              /* display interrupt activities */
 #define DBG_TIM     0x0008                              /* display timing activities */
 #define DBG_TIMTRC  0x0010                              /* display trace timing activities */
+#define DBG_RCVSCH  0x0020                              /* display receive scheduling activities */
+#define DBG_XMTSCH  0x0040                              /* display transmit scheduling activities */
 #define DBG_XMT     TMXR_DBG_XMT                        /* display Transmitted Data */
 #define DBG_RCV     TMXR_DBG_RCV                        /* display Received Data */
 #define DBG_MDM     TMXR_DBG_MDM                        /* display Modem Signals */
@@ -444,6 +451,8 @@ DEBTAB vh_debug[] = {
   {"INT",    DBG_INT,    "interrupt activities"},
   {"TIM",    DBG_TIM,    "timing activities"},
   {"TIMTRC", DBG_TIMTRC, "trace timing activities"},
+  {"RCVSCH", DBG_RCVSCH, "receive scheduling activities"},
+  {"XMTSCH", DBG_XMTSCH, "transmit scheduling activities"},
   {"XMT",    DBG_XMT,    "Transmitted Data"},
   {"RCV",    DBG_RCV,    "Received Data"},
   {"MDM",    DBG_MDM,    "Modem Signals"},
@@ -457,6 +466,7 @@ DEBTAB vh_debug[] = {
 static t_stat vh_rd (int32 *data, int32 PA, int32 access);
 static t_stat vh_wr (int32 data, int32 PA, int32 access);
 static t_stat vh_svc (UNIT *uptr);
+static t_stat vh_xmt_svc (UNIT *uptr);
 static t_stat vh_timersvc (UNIT *uptr);
 static int32 vh_rxinta (void);
 static int32 vh_txinta (void);
@@ -496,12 +506,13 @@ static DIB vh_dib = {
     IOLN_VH,    /* IO space per device */
 };
 
-static UNIT vh_unit[VH_MUXES+1] = {
-    { UDATA (&vh_svc, UNIT_IDLE|UNIT_ATTABLE, 0) },
+static UNIT vh_unit[VH_MUXES+3] = {
+    { UDATA (NULL, UNIT_ATTABLE, 0) },
 };
 
+static UNIT *vh_poll_unit;
+static UNIT *vh_xmit_unit;
 static UNIT *vh_timer_unit;
-static UNIT *vh_poll_unit = &vh_unit[0];
 
 static const REG vh_reg[] = {
     { BRDATADF (CSR,         vh_csr, DEV_RDX, 16, VH_MUXES, "control/status register, boards 0 to 3", vh_csr_bits) },
@@ -514,7 +525,7 @@ static const REG vh_reg[] = {
     { GRDATAD  (RCVINT,      vh_rxi, DEV_RDX, 32, 0,        "rcv interrupts 1 bit/channel") },
     { GRDATAD  (TXINT,       vh_txi, DEV_RDX, 32, 0,        "xmt interrupts 1 bit/channel") },
     { GRDATAD  (FIFOCRIT,   vh_crit, DEV_RDX, 32, 0,        "FIFO.CRIT 1 bit/channel") },
-    { DRDATAD  (TIME,       vh_wait, 24,                    "input polling adjustment"), PV_LEFT },
+    { DRDATAD  (TIME,       vh_wait, 24,                    "Slow DMA start delay"), PV_LEFT },
     { GRDATA   (DEVADDR,  vh_dib.ba, DEV_RDX, 32, 0), REG_HRO },
     { GRDATA   (DEVVEC,  vh_dib.vec, DEV_RDX, 16, 0), REG_HRO },
     { NULL }
@@ -633,7 +644,7 @@ static int32 vh_rxinta (void)
 
     for (vh = 0; vh < vh_desc.lines/VH_LINES; vh++) {
         if (vh_rxi & (1 << vh)) {
-            sim_debug(DBG_INT, &vh_dev, "vh_rzinta(vh=%d)\n", vh);
+            sim_debug(DBG_INT, &vh_dev, "vh_rxinta(vh=%d)\n", vh);
             vh_clr_rxint (vh);
             return (vh_dib.vec + (vh * 010));
         }
@@ -652,6 +663,7 @@ static void vh_clr_txint (  int32   vh  )
 
 static void vh_set_txint (  int32   vh  )
 {
+    sim_debug(DBG_INT, &vh_dev, "vh_set_txint(vh=%d)\n", vh);
     vh_txi |= (1 << vh);
     SET_INT (VHTX);
 }
@@ -1121,13 +1133,14 @@ static t_stat vh_wr (   int32   ldata,
                     (lp->txchar & ~0377) | (data & 0377);
             lp->txchar = data;  /* TXCHAR */
             if (lp->txchar & TXCHAR_TX_DATA_VALID) {
-                if (lp->tbuf2 & TB2_TX_ENA)
-                    vh_putc (vh, lp,
-                        CSR_GETCHAN (vh_csr[vh]),
-                        lp->txchar);
-                q_tx_report (vh,
-                    CSR_GETCHAN (vh_csr[vh]) << CSR_V_TX_LINE);
-                lp->txchar &= ~TXCHAR_TX_DATA_VALID;
+                if (lp->tbuf2 & TB2_TX_ENA) {
+                    lp->txstate = TXS_PIO_START;
+                    if (vh_putc (vh, lp, CSR_GETCHAN (vh_csr[vh]),
+                                 lp->txchar) != SCPE_STALL)
+                        lp->txstate = TXS_PIO_PENDING;
+                    sim_debug (DBG_XMTSCH, &vh_dev, "VH-%d PIO: %s - 0x%X\n", (int)(lp - vh_parm), (lp->txstate == TXS_PIO_PENDING) ? "Started" : "Scheduled Start", lp->txchar & 0xFF);
+                    sim_activate_after_abs (vh_xmit_unit, lp->tmln->txdeltausecs);
+                }
             }
         }
         break;
@@ -1283,9 +1296,9 @@ static t_stat vh_wr (   int32   ldata,
                 (lp->tbuf2 & ~0377) | (data & 0377);
         lp->tbuf2 = data;
         /* if starting a DMA, clear DMA_ERR */
-        if (vh_unit[vh].flags & UNIT_FASTDMA) {
-            doDMA (vh, CSR_GETCHAN (vh_csr[vh]));
-            tmxr_send_buffered_data (lp->tmln);
+        if ((data & TB2_TX_ENA) && (data & TB2_TX_DMA_START)) {
+            sim_debug (DBG_XMTSCH, &vh_dev, "VH-%d DMA Starting: After %d\n", vh, (vh_unit[vh].flags & UNIT_FASTDMA) ? vh_wait/10 : vh_wait);
+            sim_activate_after_abs (vh_xmit_unit, (vh_unit[vh].flags & UNIT_FASTDMA) ? vh_wait/10 : vh_wait);
         }
         break;
     case 7:     /* TBUFFCT */
@@ -1321,7 +1334,8 @@ static void doDMA ( int32   vh,
     line = (vh * VH_LINES) + chan;
     lp = &vh_parm[line];
     if ((lp->tbuf2 & TB2_TX_ENA) && (lp->tbuf2 & TB2_TX_DMA_START)) {
-/* BUG: should compare against available xmit buffer space */
+        int32 sent = 0;
+
         pa = lp->tbuf1;
         pa |= (lp->tbuf2 & TB2_M_TBUFFAD) << 16;
         status = chan << CSR_V_TX_LINE;
@@ -1332,8 +1346,9 @@ static void doDMA ( int32   vh,
                 lp->tbuffct = 0;
                 break;
             }
-            if (vh_putc (vh, lp, chan, buf) != SCPE_OK)
+            if (vh_putc (vh, lp, chan, buf) == SCPE_STALL)
                 break;
+            ++sent;
             /* pa = (pa + 1) & PAMASK; */
             pa = (pa + 1) & ((1 << 22) - 1);
             lp->tbuffct--;
@@ -1341,10 +1356,16 @@ static void doDMA ( int32   vh,
         lp->tbuf1 = pa & 0177777;
         lp->tbuf2 = (lp->tbuf2 & ~TB2_M_TBUFFAD) |
                 ((pa >> 16) & TB2_M_TBUFFAD);
-        if ((lp->tbuffct == 0) || (!lp->tmln->conn)) {
+        sim_debug (DBG_XMTSCH, &vh_dev, "VH-%d DMAed: %d, remaining: %u - %d\n", (int)(lp - vh_parm), sent, lp->tbuffct, status);
+        if (((tmxr_txdone_ln (lp->tmln)) &&
+             (sent == 0) &&
+             (lp->tbuffct == 0)) || 
+            (!lp->tmln->conn)) {
             lp->tbuf2 &= ~TB2_TX_DMA_START;
             q_tx_report (vh, status);
-        }
+            lp->txstate = TXS_IDLE;
+        } else
+            lp->txstate = TXS_DMA_PENDING;
     }
 }
 
@@ -1385,9 +1406,10 @@ static t_stat vh_timersvc (  UNIT    *uptr   )
 
 static t_stat vh_svc (  UNIT    *uptr   )
 {
-    int32   vh, newln, i;
+    int32   vh, newln;
 
     sim_debug(DBG_TRC, find_dev_from_unit(uptr), "vh_svc()\n");
+    sim_debug(DBG_RCVSCH, find_dev_from_unit(uptr), "vh_svc()\n");
 
     /* sample every 10ms for modem changes (new connections) */
     newln = tmxr_poll_conn (&vh_desc);
@@ -1406,18 +1428,55 @@ static t_stat vh_svc (  UNIT    *uptr   )
                       ((lp->lstat >> 8) & 0376));
             /* BUG: should check for overflow above */
     }
-    /* scan all muxes, lines for DMA to complete; start every 3.12ms */
-    for (vh = 0; vh < vh_desc.lines/VH_LINES; vh++) {
-        for (i = 0; i < VH_LINES; i++)
-            doDMA (vh, i);
-    }
     /* interrupt driven in a real DHQ */
     tmxr_poll_rx (&vh_desc);
     for (vh = 0; vh < vh_desc.lines/VH_LINES; vh++)
         vh_getc (vh);
-    tmxr_poll_tx (&vh_desc);
     sim_clock_coschedule (uptr, tmxr_poll); /* requeue ourselves */
-    return (SCPE_OK);
+    return SCPE_OK;
+}
+
+static t_stat vh_xmt_svc (  UNIT    *uptr   )
+{
+    int32   vh, i;
+
+    sim_debug(DBG_TRC, find_dev_from_unit(uptr), "vh_xmt_svc()\n");
+    sim_debug(DBG_XMTSCH, find_dev_from_unit(uptr), "vh_xmt_svc()\n");
+
+    /* scan all muxes lines */
+    for (vh = 0; vh < vh_desc.lines/VH_LINES; vh++) {
+        for (i = 0; i < VH_LINES; i++) {
+            int32   line = (vh * VH_LINES) + i;
+            TMLX    *lp = &vh_parm[line];
+
+            /* process any pending programmed output */
+            if (lp->txchar & TXCHAR_TX_DATA_VALID) {
+                if (lp->tbuf2 & TB2_TX_ENA) {
+                    sim_debug (DBG_XMTSCH, &vh_dev, "VH-%d PIO: %s - 0x%X\n", (int)(lp - vh_parm), (lp->txstate == TXS_PIO_PENDING) ? "Pending" : ((lp->txstate == TXS_PIO_START) ? "Starting" : "Unknown"), lp->txchar & 0xFF);
+                    switch (lp->txstate) {
+                        case TXS_PIO_PENDING:
+                            if (0 == tmxr_txdone_ln (lp->tmln))     /* actually done? */
+                                break;
+                            q_tx_report (vh,
+                                CSR_GETCHAN (vh_csr[vh]) << CSR_V_TX_LINE);
+                            lp->txchar &= ~TXCHAR_TX_DATA_VALID;
+                            lp->txstate = TXS_IDLE;
+                            break;
+                        case TXS_PIO_START:
+                            if (vh_putc (vh, lp, CSR_GETCHAN (vh_csr[vh]),
+                                         lp->txchar) != SCPE_STALL) 
+                                lp->txstate = TXS_PIO_PENDING;
+                            break;
+                    }
+                }
+            }
+            /* process pending DMA */
+            doDMA (vh, i);
+        }
+    }
+    tmxr_poll_tx (&vh_desc);
+    sim_activate_after (uptr, 250000); /* requeue ourselves */
+    return SCPE_OK;
 }
 
 /* init a channel on a controller */
@@ -1526,24 +1585,45 @@ static t_stat vh_reset (    DEVICE  *dptr   )
     tmxr_set_port_speed_control (&vh_desc);
     if (vh_desc.lines > VH_MUXES*VH_LINES)
         vh_desc.lines = VH_MUXES*VH_LINES;
-    for (i = 0; i < vh_desc.lines; i++)
-        vh_parm[i].tmln = &vh_ldsc[i];
-    vh_dev.numunits = (vh_desc.lines / VH_LINES) + 1;
-    vh_timer_unit = &vh_unit[vh_dev.numunits-1];
+    vh_dev.numunits = (vh_desc.lines / VH_LINES) + 3;
+    if (vh_poll_unit)
+        sim_cancel (vh_poll_unit);
+    vh_poll_unit =  &vh_unit[(vh_desc.lines / VH_LINES) + 0];
+    vh_poll_unit->action = &vh_svc;
+    vh_poll_unit->flags = UNIT_DIS | UNIT_IDLE;
+    sim_set_uname (vh_poll_unit, "VH-RCV-CON");
+    vh_desc.uptr = vh_poll_unit;
+    if (vh_xmit_unit)
+        sim_cancel (vh_xmit_unit);
+    vh_xmit_unit =  &vh_unit[(vh_desc.lines / VH_LINES) + 1];
+    vh_xmit_unit->action = &vh_xmt_svc;
+    vh_xmit_unit->flags = UNIT_DIS;
+    sim_set_uname (vh_xmit_unit, "VH-XMIT");
+    if (vh_timer_unit)
+        sim_cancel (vh_timer_unit);
+    vh_timer_unit = &vh_unit[(vh_desc.lines / VH_LINES) + 2];
     vh_timer_unit->action = &vh_timersvc;
     vh_timer_unit->flags = UNIT_DIS | UNIT_IDLE;
-    for (i = 0; i < vh_desc.lines/VH_LINES; i++) {
-        /* if Unibus, force DHU mode */
-        if (UNIBUS)
-            vh_unit[i].flags |= UNIT_MODEDHU;
-        vh_unit[i].flags &= ~UNIT_DIS;
-        vh_clear (i, TRUE);
+    sim_set_uname (vh_timer_unit, "VH-TIMER");
+    for (i = 0; i < vh_desc.lines; i++) {
+        vh_parm[i].tmln = &vh_ldsc[i];
+        tmxr_set_line_unit (&vh_desc, i, vh_poll_unit);
+        tmxr_set_line_output_unit (&vh_desc, i, vh_xmit_unit);
+        }
+    for (i = 0; i < VH_MUXES; i++) {
+        if (i < vh_desc.lines/VH_LINES) {
+            /* if Unibus, force DHU mode */
+            if (UNIBUS)
+                vh_unit[i].flags |= UNIT_MODEDHU;
+            vh_unit[i].flags &= ~UNIT_DIS;
+            vh_clear (i, TRUE);
+        } else {
+            vh_unit[i].flags |= UNIT_DIS;
+        }
     }
     vh_rxi = vh_txi = 0;
     CLR_INT (VHRX);
     CLR_INT (VHTX);
-    sim_cancel (vh_poll_unit);
-    sim_cancel (vh_timer_unit);
     vh_dib.lnt = (vh_desc.lines / VH_LINES) * IOLN_VH;      /* set length */
     return (auto_config (dptr->name, (dptr->flags & DEV_DIS) ? 0 : vh_desc.lines/VH_LINES));
 }
@@ -1552,9 +1632,9 @@ static t_stat vh_reset (    DEVICE  *dptr   )
 static t_stat vh_attach (   UNIT    *uptr,
                 CONST char    *cptr   )
 {
-    if (uptr == vh_poll_unit)
-        return (tmxr_attach (&vh_desc, uptr, cptr));
-    return (SCPE_NOATT);
+    if (uptr == vh_unit)
+        return tmxr_attach (&vh_desc, uptr, cptr);
+    return SCPE_NOATT;
 }
 
 static t_stat vh_detach (   UNIT    *uptr   )
@@ -1643,7 +1723,7 @@ newln = (int32) get_uint (cptr, 10, (VH_MUXES * VH_LINES), &r);
 if ((r != SCPE_OK) || (newln == vh_desc.lines))
     return r;
 if ((newln == 0) || (newln % VH_LINES))
-    return SCPE_ARG;
+    return sim_messagef (SCPE_ARG, "VH line count must be a multiple of %d\n", VH_LINES);
 if (newln < vh_desc.lines) {
     for (i = newln, t = 0; i < vh_desc.lines; i++)
         t = t | vh_ldsc[i].conn;

@@ -256,8 +256,9 @@ uint32 tq_pip = 0;                                      /* poll in progress */
 struct uq_ring tq_cq = { 0 };                           /* cmd ring */
 struct uq_ring tq_rq = { 0 };                           /* rsp ring */
 struct tqpkt tq_pkt[TQ_NPKTS];                          /* packet queue */
-uint16 tq_freq = 0;                                      /* free list */
-uint16 tq_rspq = 0;                                      /* resp list */
+uint16 tq_freq = 0;                                     /* free list */
+uint16 tq_rspq = 0;                                     /* resp list */
+uint16 tq_max_plug;                                     /* highest unit plug number */
 uint32 tq_pbsy = 0;                                     /* #busy pkts */
 uint32 tq_credits = 0;                                  /* credits */
 uint32 tq_hat = 0;                                      /* host timer */
@@ -845,8 +846,8 @@ else {                                                  /* valid cmd */
             tq_enqt (&uptr->pktq, pkt);                 /* do later */
             return OK;
             }
-/*      if (tq_cmf[cmd] & MD_CDL)                     *//* clr cch lost? */
-/*          uptr->flags = uptr->flags & ~UNIT_CDL; */
+//      if (tq_cmf[cmd] & MD_CDL)                       /* clr cch lost? */
+//          uptr->flags = uptr->flags & ~UNIT_CDL;
         if ((mdf & MD_CSE) && (uptr->flags & UNIT_SXC)) /* clr ser exc? */
             uptr->flags = uptr->flags & ~UNIT_SXC;
         memset (uptr->results, 0, sizeof (struct tq_req_results)); /* init request state */
@@ -1019,7 +1020,7 @@ UNIT *uptr;
 sim_debug(DBG_TRC, &tq_dev, "tq_gus\n");
 
 if (tq_pkt[pkt].d[CMD_MOD] & MD_NXU) {                  /* next unit? */
-    if (lu == 65535) {                                  /* end of range? */
+    if (lu > tq_max_plug) {                             /* beyond last unit plug? */
         lu = 0;                                         /* reset to 0 */
         tq_pkt[pkt].d[RSP_UN] = (uint16)lu;
         }
@@ -2068,9 +2069,17 @@ int32 i, j;
 UNIT *uptr;
 static t_bool plugs_inited = FALSE;
 
+for (i=tq_max_plug=0; i<TQ_NUMDR; i++)
+    if (dptr->units[i].unit_plug > tq_max_plug)
+        tq_max_plug = (uint16)dptr->units[i].unit_plug;
 if (!plugs_inited ) {
     uint32 d;
+    char uname[16];
 
+    sprintf (uname, "%s-TIMER", dptr->name);
+    sim_set_uname (&dptr->units[4], uname);
+    sprintf (uname, "%s-QUESVC", dptr->name);
+    sim_set_uname (&dptr->units[5], uname);
     plugs_inited  = TRUE;
     for (d = 0; d < tq_dev.numunits - 2; d++)
         tq_unit[d].unit_plug = d;

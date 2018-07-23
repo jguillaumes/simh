@@ -813,6 +813,7 @@ typedef struct {
     struct uq_ring      cq;                             /* cmd ring */
     struct uq_ring      rq;                             /* rsp ring */
     struct rqpkt        pak[RQ_NPKTS];                  /* packet queue */
+    uint16              max_plug;                       /* highest unit plug number */
     } MSC;
 
 /* debugging bitmaps */
@@ -1798,7 +1799,7 @@ UNIT *uptr;
 sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_gus\n");
 
 if (cp->pak[pkt].d[CMD_MOD] & MD_NXU) {                 /* next unit? */
-    if (lu == 65535) {                                  /* end of range? */
+    if (lu > cp->max_plug) {                            /* beyond last unit plug? */
         lu = 0;                                         /* reset to 0 */
         cp->pak[pkt].d[RSP_UN] = lu;
         }
@@ -2032,7 +2033,7 @@ if (bc & 1)                                             /* odd byte cnt? */
     return (ST_HST | SB_HST_OC);
 if (bc & 0xF0000000)                                    /* 'reasonable' bc? */
     return (ST_CMD | I_BCNT);
-/* if (lbn & 0xF0000000) return (ST_CMD | I_LBN);     *//* 'reasonable' lbn? */
+// if (lbn & 0xF0000000) return (ST_CMD | I_LBN);       /* 'reasonable' lbn? */
 if (lbn >= maxlbn) {                                    /* accessing RCT? */
     if (lbn >= (maxlbn + drv_tab[dtyp].rcts))           /* beyond copy 1? */
         return (ST_CMD | I_LBN);                        /* lbn err */
@@ -2949,7 +2950,12 @@ if (cp->ctype == DEFAULT_CTYPE)
 
 if (!plugs_inited ) {
     uint32 d, u = 0;
+    char uname[16];
 
+    sprintf (uname, "%s-TIMER", dptr->name);
+    sim_set_uname (&dptr->units[4], uname);
+    sprintf (uname, "%s-QUESVC", dptr->name);
+    sim_set_uname (&dptr->units[5], uname);
     plugs_inited  = TRUE;
     for (i = 0; i < RQ_NUMCT; i++) {
         for (d = 0; d < rq_devmap[i]->numunits - 2; d++) {
@@ -3001,6 +3007,9 @@ for (i = 0; i < (RQ_NUMDR + 2); i++) {                  /* init units */
     if (uptr->rqxb == NULL)
         return SCPE_MEM;
     }
+for (i=cp->max_plug=0; i<RQ_NUMDR; i++)
+    if (dptr->units[i].unit_plug > cp->max_plug)
+        cp->max_plug = (uint16)dptr->units[i].unit_plug;
 return auto_config (0, 0);                              /* run autoconfig */
 }
 

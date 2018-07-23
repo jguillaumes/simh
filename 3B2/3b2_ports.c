@@ -463,7 +463,7 @@ static void ports_cmd(uint8 cid, cio_entry *rentry, uint8 *rapp_data)
  */
 static void ports_update_conn(uint32 ln)
 {
-    cio_entry centry;
+    cio_entry centry = {0};
     uint8 cid;
     uint8 app_data[4] = {0};
 
@@ -499,7 +499,7 @@ static void ports_update_conn(uint32 ln)
 
 void ports_sysgen(uint8 cid)
 {
-    cio_entry cqe;
+    cio_entry cqe = {0};
     uint8 app_data[4] = {0};
 
     cqe.opcode = 3; /* Sysgen success! */
@@ -515,7 +515,7 @@ void ports_sysgen(uint8 cid)
 
 void ports_express(uint8 cid)
 {
-    cio_entry rqe;
+    cio_entry rqe = {0};
     uint8 app_data[4] = {0};
     cio_rexpress(cid, PPQESIZE, &rqe, app_data);
     ports_cmd(cid, &rqe, app_data);
@@ -524,7 +524,7 @@ void ports_express(uint8 cid)
 void ports_full(uint8 cid)
 {
     uint32 i;
-    cio_entry rqe;
+    cio_entry rqe = {0};
     uint8 app_data[4] = {0};
 
     for (i = 0; i < PORTS_LINES; i++) {
@@ -745,7 +745,7 @@ t_stat ports_xmt_svc(UNIT *uptr)
     uint8 cid, ln;
     char c;
     t_bool tx = FALSE; /* Did a tx ever occur? */
-    cio_entry centry;
+    cio_entry centry = {0};
     uint8 app_data[4] = {0};
     uint32 wait = 0x7fffffff;
 
@@ -762,7 +762,7 @@ t_stat ports_xmt_svc(UNIT *uptr)
                 (ports_state[ln].oflag & ONLCR) &&
                 !(ports_state[ln].crlf)) {
                 if (tmxr_putc_ln(&ports_ldsc[ln], 0xd) == SCPE_OK) {
-                    wait = MIN(wait, ports_ldsc[ln].txdelta);
+                    wait = MIN(wait, ports_ldsc[ln].txdeltausecs);
                     sim_debug(IO_DBG, &ports_dev,
                               "[%08x] [ports_xmt_svc] [LINE %d] XMIT (crlf):  %02x (%c)\n",
                               R[NUM_PC], ln, 0xd, 0xd);
@@ -776,7 +776,7 @@ t_stat ports_xmt_svc(UNIT *uptr)
             ports_state[ln].crlf = FALSE;
 
             if (tmxr_putc_ln(&ports_ldsc[ln], c) == SCPE_OK) {
-                wait = MIN(wait, ports_ldsc[ln].txdelta);
+                wait = MIN(wait, ports_ldsc[ln].txdeltausecs);
                 ports_state[ln].tx_chars--;
                 ports_state[ln].tx_addr++;
                 sim_debug(IO_DBG, &ports_dev,

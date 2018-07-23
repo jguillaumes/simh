@@ -1,6 +1,7 @@
 #
 # This GNU make makefile has been tested on:
 #   Linux (x86 & Sparc & PPC)
+#   Android (Termux)
 #   OS X
 #   Solaris (x86 & Sparc) (gcc and Sun C)
 #   OpenBSD
@@ -37,13 +38,14 @@
 #
 # simh project support is provided for simulators that are built with 
 # dependent packages provided with the or by the operating system 
-# distribution OR for platforms where that isn't directly available (OS X) 
-# by packages from specific package management systems (MacPorts).  Users 
-# wanting to build simulators with locally build dependent packages or 
-# packages provided by an unsupported package management system can 
-# override where this procedure looks for include files and/or libraries.  
-# Overrides can be specified by define exported environment variables or 
-# GNU make command line arguments which specify INCLUDES and/or LIBRARIES.  
+# distribution OR for platforms where that isn't directly available 
+# (OS X) by packages from specific package management systems (MacPorts 
+# or Homebrew).  Users wanting to build simulators with locally build 
+# dependent packages or packages provided by an unsupported package 
+# management system can override where this procedure looks for include 
+# files and/or libraries.  Overrides can be specified by define exported 
+# environment variables or GNU make command line arguments which specify 
+# INCLUDES and/or LIBRARIES.  
 # Each of these, if specified, must be the complete list include directories
 # or library directories that should be used with each element separated by 
 # colons. (i.e. INCLUDES=/usr/include/:/usr/local/include/:...)
@@ -126,7 +128,7 @@ ifneq ($(findstring Windows,$(OS)),)
   else # Msys or cygwin
     ifeq (MINGW,$(findstring MINGW,$(shell uname)))
       $(info *** This makefile can not be used with the Msys bash shell)
-      $(error *** Use build_mingw.bat $(MAKECMDGOALS) from a Windows command prompt)
+      $(error Use build_mingw.bat $(MAKECMDGOALS) from a Windows command prompt)
     endif
   endif
 endif
@@ -195,31 +197,22 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
     endif
   endif
   ifeq (git-repo,$(shell if $(TEST) -d ./.git; then echo git-repo; fi))
-    NEED_HOOKS = $(shell if $(TEST) ! -e ./.git/hooks/post-checkout; then echo need-hooks; fi)
-    ifeq (,$(NEED_HOOKS))
-      NEED_HOOKS = $(shell if ! `diff ./.git/hooks/post-checkout ./Visual\ Studio\ Projects/git-hooks/post-checkout >/dev/null`; then echo need-hooks; fi)
+    GIT_PATH=$(strip $(shell which git))
+    ifeq (,$(GIT_PATH))
+      $(error building using a git repository, but git is not available)
     endif
-    ifeq (need-hooks,$(NEED_HOOKS))
-      $(info *** Installing git hooks in local repository ***)
-      GIT_HOOKS += $(shell cp './Visual Studio Projects/git-hooks/post-commit' ./.git/hooks/)
-      GIT_HOOKS += $(shell cp './Visual Studio Projects/git-hooks/post-checkout' ./.git/hooks/)
-      GIT_HOOKS += $(shell cp './Visual Studio Projects/git-hooks/post-merge' ./.git/hooks/)
-      GIT_HOOKS += $(shell ./.git/hooks/post-checkout)
-      ifneq (,$(strip $(GIT_HOOKS)))
-        $(info *** Warning - Error installing git hooks *** $(GIT_HOOKS))
-      else
-        ifneq (commit-id-exists,$(shell if $(TEST) -e .git-commit-id; then echo commit-id-exists; fi))
-          $(shell rm .git-commit-id)
-        endif
+    ifeq (commit-id-exists,$(shell if $(TEST) -e .git-commit-id; then echo commit-id-exists; fi))
+      CURRENT_GIT_COMMIT_ID=$(strip $(shell grep 'SIM_GIT_COMMIT_ID' .git-commit-id | awk '{ print $$2 }'))
+      ACTUAL_GIT_COMMIT_ID=$(strip $(shell git log -1 --pretty="%H"))
+      ifneq ($(CURRENT_GIT_COMMIT_ID),$(ACTUAL_GIT_COMMIT_ID))
+        NEED_COMMIT_ID = need-commit-id
       endif
+    else
+      NEED_COMMIT_ID = need-commit-id
     endif
-    ifneq (commit-id-exists,$(shell if $(TEST) -e .git-commit-id; then echo commit-id-exists; fi))
-      ifeq (,$(strip $(GIT_HOOKS)))
-        GIT_HOOKS = $(shell ./.git/hooks/post-checkout)
-        ifneq (,$(strip $(GIT_HOOKS)))
-          $(info *** Warning - Error executing git hooks *** $(GIT_HOOKS))
-        endif
-      endif
+    ifeq (need-commit-id,$(NEED_COMMIT_ID))
+      $isodate=$(shell git log -1 --pretty="%ai"|sed -e 's/ /T/'|sed -e 's/ //')
+      $(shell git log -1 --pretty="SIM_GIT_COMMIT_ID %H%nSIM_GIT_COMMIT_TIME $isodate" >.git-commit-id)
     endif
   endif
   LTO_EXCLUDE_VERSIONS = 
@@ -493,7 +486,10 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
     endif
   endif
   ifneq (,$(call find_include,semaphore))
-    OS_CCDEFS += -DHAVE_SEMAPHORE
+    ifneq (, $(shell grep sem_timedwait $(call find_include,semaphore)))
+      OS_CCDEFS += -DHAVE_SEMAPHORE
+      $(info using semaphore: $(call find_include,semaphore))
+    endif
   endif
   ifneq (,$(call find_include,sys/ioctl))
     OS_CCDEFS += -DHAVE_SYS_IOCTL
@@ -871,8 +867,23 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
         GIT_COMMIT_ID=$(shell cd .. ; git submodule status | grep "$(notdir $(realpath .))" | awk '{ print $$1 }')
         GIT_COMMIT_TIME=$(shell git --git-dir=$(realpath .)/.git log $(GIT_COMMIT_ID) -1 --pretty="%aI")
       else
-        GIT_COMMIT_ID=undetermined-git-id
-        GIT_COMMIT_TIME=undetermined-commit-time
+        $(info *** Error ***)
+        $(info *** Error *** The simh git commit id can not be determined.)
+        $(info *** Error ***)
+        $(info *** Error *** There are ONLY two supported ways to acquire and build)
+        $(info *** Error *** the simh source code:)
+        $(info *** Error ***   1: directly with git via:)
+        $(info *** Error ***      $$ git clone https://github.com/simh/simh)
+        $(info *** Error ***      $$ cd simh)
+        $(info *** Error ***      $$ make {simulator-name})
+        $(info *** Error *** OR)
+        $(info *** Error ***   2: download the source code zip archive from:)
+        $(info *** Error ***      $$ wget(or via browser) https://github.com/simh/simh/archive/master.zip)
+        $(info *** Error ***      $$ unzip master.zip)
+        $(info *** Error ***      $$ cd simh-master)
+        $(info *** Error ***      $$ make {simulator-name})
+        $(info *** Error ***)
+        $(error get simh source either with zip download or git clone)
       endif
     endif
   endif
@@ -1164,7 +1175,7 @@ PDP18B = ${PDP18BD}/pdp18b_dt.c ${PDP18BD}/pdp18b_drm.c ${PDP18BD}/pdp18b_cpu.c 
 	${PDP18BD}/pdp18b_lp.c ${PDP18BD}/pdp18b_mt.c ${PDP18BD}/pdp18b_rf.c \
 	${PDP18BD}/pdp18b_rp.c ${PDP18BD}/pdp18b_stddev.c ${PDP18BD}/pdp18b_sys.c \
 	${PDP18BD}/pdp18b_rb.c ${PDP18BD}/pdp18b_tt1.c ${PDP18BD}/pdp18b_fpp.c \
-	${PDP18BD}/pdp18b_g2tty.c
+	${PDP18BD}/pdp18b_g2tty.c ${PDP18BD}/pdp18b_dr15.c
 
 PDP4_OPT = -DPDP4 -I ${PDP18BD}
 PDP7_OPT = -DPDP7 -I ${PDP18BD}
@@ -1188,6 +1199,17 @@ PDP11 = ${PDP11D}/pdp11_fp.c ${PDP11D}/pdp11_cpu.c ${PDP11D}/pdp11_dz.c \
 	${PDP11D}/pdp11_kmc.c ${PDP11D}/pdp11_dup.c ${PDP11D}/pdp11_rs.c \
 	${PDP11D}/pdp11_vt.c ${PDP11D}/pdp11_td.c ${PDP11D}/pdp11_io_lib.c $(DISPLAYL) $(DISPLAYVT)
 PDP11_OPT = -DVM_PDP11 -I ${PDP11D} ${NETWORK_OPT} $(DISPLAY_OPT)
+
+
+UC15D = PDP11
+UC15 = ${UC15D}/pdp11_cis.c ${UC15D}/pdp11_cpu.c \
+	${UC15D}/pdp11_cpumod.c ${UC15D}/pdp11_cr.c \
+	${UC15D}/pdp11_fp.c ${UC15D}/pdp11_io.c \
+	${UC15D}/pdp11_io_lib.c ${UC15D}/pdp11_lp.c \
+	${UC15D}/pdp11_rh.c ${UC15D}/pdp11_rk.c \
+	${UC15D}/pdp11_stddev.c ${UC15D}/pdp11_sys.c \
+	${UC15D}/pdp11_uc15.c
+UC15_OPT = -DVM_PDP11 -DUC15 -I ${UC15D} -I ${PDP18BD}
 
 
 VAXD = VAX
@@ -1748,7 +1770,7 @@ ALL = pdp1 pdp4 pdp7 pdp8 pdp9 pdp15 pdp11 pdp10 \
 	i7094 ibm1130 id16 id32 sds lgp h316 cdc1700 \
 	swtp6800mp-a swtp6800mp-a2 tx-0 ssem b5500 isys8010 isys8020 \
 	isys8030 isys8024 imds-225 scelbi 3b2 i701 i704 i7010 i7070 i7080 i7090 \
-	i650
+	i650 sigma uc15
 
 all : ${ALL}
 
@@ -1832,6 +1854,12 @@ pdp11 : ${BIN}BuildROMs${EXE} ${BIN}pdp11${EXE}
 ${BIN}pdp11${EXE} : ${PDP11} ${SIM}
 	${MKDIRBIN}
 	${CC} ${PDP11} ${SIM} ${PDP11_OPT} $(CC_OUTSPEC) ${LDFLAGS}
+
+uc15 : ${BIN}uc15${EXE}
+
+${BIN}uc15${EXE} : ${UC15} ${SIM}
+	${MKDIRBIN}
+	${CC} ${UC15} ${SIM} ${UC15_OPT} $(CC_OUTSPEC) ${LDFLAGS}
 
 vax : microvax3900
 
@@ -2126,7 +2154,7 @@ ${BIN}b5500${EXE} : ${B5500} ${SIM}
 	${MKDIRBIN}
 	${CC} ${B5500} ${SIM} ${B5500_OPT} $(CC_OUTSPEC) ${LDFLAGS}
 
-3b2 : $(BIN)3b2$(EXE)
+3b2 : ${BIN}BuildROMs${EXE} $(BIN)3b2$(EXE)
  
 ${BIN}3b2${EXE} : ${ATT3B2} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}

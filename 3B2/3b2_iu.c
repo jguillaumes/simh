@@ -538,7 +538,7 @@ t_stat iu_svc_timer(UNIT *uptr)
 uint32 iu_read(uint32 pa, size_t size)
 {
     uint8 reg, modep;
-    uint32 data;
+    uint32 data = 0;
 
     reg = (uint8) (pa - IUBASE);
 
@@ -621,7 +621,6 @@ uint32 iu_read(uint32 pa, size_t size)
         csr_data &= ~CSRDMA;
         break;
     default:
-        data = 0;
         break;
     }
 
@@ -729,7 +728,7 @@ void iu_write(uint32 pa, uint32 val, size_t size)
         break;
     case THRB: /* TX/RX Buf B */
         iu_tx(PORT_B, bval);
-        sim_activate_abs(contty_xmt_unit, contty_ldsc[0].txdelta);
+        sim_activate_abs(contty_xmt_unit, contty_ldsc[0].txdeltausecs);
         break;
     case OPCR:
         iu_state.opcr = bval;
