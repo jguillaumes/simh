@@ -10,6 +10,7 @@
 . . [New Functionality](#new-functionality)  
 . . . . [Remote Console Facility](#remote-console-facility)  
 . . . . [VAX/PDP11 Enhancements](#vaxpdp11-enhancements)  
+. . . . [PDP11 Specific Enhancements](#pdp11-specific-enhancements)  
 . . . . [PDP10 Enhancements](#pdp10-enhancements)  
 . . . . [SDS 940 Enhancements](#sds-940-enhancements)  
 . . . . [Terminal Multiplexer additions](#terminal-multiplexer-additions)  
@@ -52,13 +53,26 @@
 
 #### Matt Burke has implemented new VAX model simulators:
 
-    VAX/11 730
-    VAX/11 750
+    VAX-11/730
+    VAX-11/750
+    VAX 8200/8250
     VAX 8600/8650
-    MicroVAX I & VAXStation I
-    MicroVAX II & VAXStation II
+    MicroVAX I & VAXstation I
+    MicroVAX II & VAXstation II & VAXstation II/GPX
     rtVAX 1000 (or Industrial VAX 620)
-    
+    MicroVAX 2000 & VAXstation 2000
+    MicroVAX 3100 M10/M20
+    MicroVAX 3100 M10e/M20e
+    InfoServer 100
+    InfoServer 150 VXT
+    VAXstation 3100 M30
+    VAXstation 3100 M38
+    VAXstation 3100 M76
+    VAXstation 4000 VLC
+    VAXstation 4000 M60
+    MicroVAX 3100 M80
+    InfoServer 1000
+
 #### Howard Harte has implemented a Lincoln Labs TX-0 simulator.
 
 #### Gerardo Ospina has implemented a Manchester University SSEM (Small Scale Experimental Machine) simulator.
@@ -128,9 +142,14 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
         when packets arrive too fast.
     MicroVAX 3900 has QVSS (VCB01) board available.
     MicroVAX 3900 and MicroVAX II have SET CPU AUTOBOOT option
-    MicroVAX 3900 has a SET CPU MODEL=(MicroVAX|VAXServer|VAXStation) command to change between system types
+    MicroVAX 3900 has a SET CPU MODEL=(MicroVAX|VAXserver|VAXstation) command to change between system types
     MicroVAX I has a SET CPU MODEL=(MicroVAX|VAXSTATION) command to change between system types
     MicroVAX II has a SET CPU MODEL=(MicroVAX|VAXSTATION) command to change between system types
+
+#### PDP11 Specific Enhancements
+    ROM (from Lars Brinkhoff) I/O page ROM support
+    NG (from Lars Brinkhoff) Knight vector display
+    DAZ (from Lars Brinkhoff) Dazzle Dart Input device
 
 #### PDP10 Enhancements
     KDP11 (from Timothe Litt) for DECnet connectivity to simulators with DMC, DUP or KDP devices
@@ -206,6 +225,10 @@ Host platforms which have libSDL available can leverage this functionality.
 #### Disk Extensions
     RAW Disk Access (including CDROM)
     Virtual Disk Container files, including differencing disks
+
+#### Tape Extensions
+    AWS format tape support
+    TAR format tape support
 
 #### Embedded ROM support
     Simulators which have boot commands which load constant files as part of 

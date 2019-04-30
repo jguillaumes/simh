@@ -779,6 +779,10 @@ AUTO_CON auto_tab[] = {/*c  #v  am vm  fxa   fxv */
     { { NULL },          1,  1, 64, 4 },                /* QZA */
     { { "CH" },          1,  1,  0, 0, 
         {04140}, {0270} },                              /* CH11 - CHAOS Net - fx CSR, fx VEC */
+    { { "NG" },          1,  1,  0, 0, 
+        {04040}, {0270} },                              /* NG - vector display */
+    { { "DAZ" },         1,  1,  0, 0, 
+        {00104} },                                      /* DAZ */
     { { NULL },         -1 }                            /* end table */
 };
 

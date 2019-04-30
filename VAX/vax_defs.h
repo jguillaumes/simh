@@ -1,6 +1,6 @@
 /* vax_defs.h: VAX architecture definitions file
 
-   Copyright (c) 1998-2011, Robert M Supnik
+   Copyright (c) 1998-2019, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -26,6 +26,7 @@
    The author gratefully acknowledges the help of Stephen Shirron, Antonio
    Carlini, and Kevin Peterson in providing specifications for the Qbus VAX's
 
+   23-Apr-19    RMS     Added hook for unpredictable indexed immediate .aw
    05-Nov-11    RMS     Added PSL_IPL17 definition
    09-May-06    RMS     Added system PTE ACV error code
    03-May-06    RMS     Added EDITPC get/put cc's macros
@@ -384,6 +385,16 @@ extern jmp_buf save_env;
 #define IE_EXC          0                               /* normal exception */
 #define IE_INT          1                               /* interrupt */
 
+/*
+ * FULL_VAX     If defined, all instructions implemented (780 like)
+ * CMPM_VAX     If defined, compatibility mode is implemented.
+ *              (Defined for 780, 750, 730 and 8600 only)
+ * NOEXS_VAX    If defined, no extra string instructions.
+ *              (Defined for MicroVAX I and II only)
+ * NOEXF_VAX    If defined, no extra floating point instructions.
+ *              (Available for future Rigel, Mariah and NVAX implementations)
+ */
+
 /* Decode ROM: opcode entry */
 
 #define DR_F            0x80                            /* FPD ok flag */
@@ -645,7 +656,7 @@ enum opcodes {
 #define STR_GETDPC(x)   (((x) >> STR_V_DPC) & STR_M_DPC)
 #define STR_GETCHR(x)   (((x) >> STR_V_CHR) & STR_M_CHR)
 #define STR_PACK(m,x)   ((((PC - fault_PC) & STR_M_DPC) << STR_V_DPC) | \
-                    (((m) & STR_M_CHR) << STR_V_CHR) | ((x) & STR_LNMASK))
+                        (((m) & STR_M_CHR) << STR_V_CHR) | ((x) & STR_LNMASK))
 
 /* Read and write */
 
@@ -817,6 +828,7 @@ extern int32 pcq_p;                                     /* PC queue ptr */
 extern int32 in_ie;                                     /* in exc, int */
 extern int32 ibcnt, ppc;                                /* prefetch ctl */
 extern int32 hlt_pin;                                   /* HLT pin intr */
+extern int32 mxpr_cc_vc;                                /* cc V & C bits from mtpr/mfpr operations */
 extern int32 mem_err;
 extern int32 crd_err;
 
@@ -908,10 +920,22 @@ extern void rom_wr_B (int32 pa, int32 val);
 #include "vax750_defs.h"
 #elif defined (VAX_730)
 #include "vax730_defs.h"
+#elif defined (VAX_410)
+#include "vax410_defs.h"
+#elif defined (VAX_420)
+#include "vax420_defs.h"
+#elif defined (VAX_43)
+#include "vax43_defs.h"
+#elif defined (VAX_440)
+#include "vax440_defs.h"
+#elif defined (IS_1000)
+#include "is1000_defs.h"
 #elif defined (VAX_610)
 #include "vax610_defs.h"
 #elif defined (VAX_620) || defined (VAX_630)
 #include "vax630_defs.h"
+#elif defined (VAX_820)
+#include "vax820_defs.h"
 #elif defined (VAX_860)
 #include "vax860_defs.h"
 #else /* VAX 3900 */
@@ -920,6 +944,11 @@ extern void rom_wr_B (int32 pa, int32 val);
 #ifndef CPU_MODEL_MODIFIERS
 #define CPU_MODEL_MODIFIERS             /* No model specific CPU modifiers */
 #endif
+#ifndef IDX_IMM_TEST
+#define IDX_IMM_TEST RSVD_ADDR_FAULT
+#endif
+
+#include "vax_watch.h"                  /* Watch chip definitions */
 
 #ifdef DONT_USE_INTERNAL_ROM
 #define BOOT_CODE_ARRAY NULL

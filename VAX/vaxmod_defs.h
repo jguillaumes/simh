@@ -67,8 +67,12 @@
         3400 0000 - 3FFF FFFF           reserved
 */
 
-#ifdef FULL_VAX                                         /* subset VAX */
+#ifdef FULL_VAX                     /* subset VAX */
 #undef FULL_VAX
+#endif
+
+#ifdef CMPM_VAX
+#undef CMPM_VAX                     /* No Compatibility Mode */
 #endif
 
 #ifndef VAXMOD_DEFS_H_
@@ -129,7 +133,7 @@
                         { UNIT_MSIZE, (1u << 29), NULL, "512M", &cpu_set_size, NULL, NULL, "Set Memory to 512M bytes" },            \
                         { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "MEMORY", NULL, NULL, &cpu_show_memory, NULL, "Display memory configuration" }
 extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
-#define CPU_MODEL_MODIFIERS { MTAB_XTD|MTAB_VDV, 0, "MODEL", "MODEL={VAXServer|MicroVAX|VAXStation}",       \
+#define CPU_MODEL_MODIFIERS { MTAB_XTD|MTAB_VDV, 0, "MODEL", "MODEL={VAXserver|MicroVAX|VAXstation}",       \
                               &cpu_set_model, &cpu_show_model, NULL, "Set/Display processor model" },       \
                             { MTAB_XTD|MTAB_VDV, 0,          "AUTOBOOT",   "AUTOBOOT",                      \
                               &sysd_set_halt, &sysd_show_halt, NULL, "Enable autoboot (Disable Halt)" },    \

@@ -43,8 +43,16 @@
         3400 0000 - 3FFF FFFF           reserved
 */
 
-#ifdef FULL_VAX                                         /* subset VAX */
+#ifdef FULL_VAX                     /* subset VAX */
 #undef FULL_VAX
+#endif
+
+#ifdef CMPM_VAX
+#undef CMPM_VAX                     /* No Compatibility Mode */
+#endif
+
+#ifndef NOEXS_VAX
+#define NOEXS_VAX       1           /* No Extra String Instructions Implemented */
 #endif
 
 #ifndef VAX_630_DEFS_H_
@@ -91,7 +99,7 @@
 
 /* CPU */
 
-#define CPU_MODEL_MODIFIERS { MTAB_XTD|MTAB_VDV, 0,          "MODEL", "MODEL={MicroVAX|VAXStation}",        \
+#define CPU_MODEL_MODIFIERS { MTAB_XTD|MTAB_VDV, 0,          "MODEL", "MODEL={MicroVAX|VAXstation|VAXstationGPX}", \
                               &cpu_set_model, &cpu_show_model, NULL, "Set/Show the simulator CPU Model" },  \
                             { MTAB_XTD|MTAB_VDV, 0,          "DIAG", "DIAG={FULL|MIN}",                     \
                               &sysd_set_diag, &sysd_show_diag, NULL, "Set/Show boot rom diagnostic mode" }, \
@@ -136,8 +144,15 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 #define ROMSIZE         (1u << ROMAWIDTH)               /* ROM length */
 #define ROMAMASK        (ROMSIZE - 1)                   /* ROM addr mask */
 #define ROMBASE         0x20040000                      /* ROM base */
+#if !defined(VAX_620)
+#define ADDR_IS_ROM(x)  (((((uint32) (x)) >= ROMBASE) && \
+                          (((uint32) (x)) < (ROMBASE + ROMSIZE + ROMSIZE))) || \
+                         ((((uint32) (x)) >= QDMBASE) && \
+                          (((uint32) (x)) < (QDMBASE + QDMSIZE))))
+#else
 #define ADDR_IS_ROM(x)  ((((uint32) (x)) >= ROMBASE) && \
-                        (((uint32) (x)) < (ROMBASE + ROMSIZE + ROMSIZE)))
+                         (((uint32) (x)) < (ROMBASE + ROMSIZE + ROMSIZE)))
+#endif
 
 /* KA630 board registers */
 
@@ -177,6 +192,14 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 #define QVMSIZE         (1u << QVMAWIDTH)               /* QVSS mem length */
 #define QVMAMASK        (QVMSIZE - 1)                   /* QVSS mem addr mask */
 #define QVMBASE         0x303C0000                      /* QVSS mem base */
+
+/* QDSS memory space */
+
+#define QDMAWIDTH       16                              /* QDSS mem addr width */
+#define QDMSIZE         (1u << QDMAWIDTH)               /* QDSS mem length */
+#define QDMAMASK        (QDMSIZE - 1)                   /* QDSS mem addr mask */
+#define QDMBASE         ((uint32)(0x30000000 + va_addr))/* QDSS mem base */
+extern uint32 va_addr;                                  /* QDSS memory offset */
 
 /* Other address spaces */
 
