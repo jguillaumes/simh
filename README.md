@@ -81,6 +81,8 @@
 
 #### Richard Cornwell has implemented the IBM 701, IBM 704, IBM 7010/1410, IBM 7070/7074, IBM 7080/702/705/7053 and IBM 7090/7094/709/704 simulators.
 
+#### Richard Cornwell has implemented the PDP6, PDP10-KA, and PDP10-KI simulators.
+
 #### Dave Bryan has implemented an HP-3000 Series III simulator.
 
 #### Updated AltairZ80 simulator from Peter Schorn.
@@ -225,10 +227,13 @@ Host platforms which have libSDL available can leverage this functionality.
 #### Disk Extensions
     RAW Disk Access (including CDROM)
     Virtual Disk Container files, including differencing disks
+    File System type detection to accurately autosize disks.
+    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, Ultrix Partitions
 
 #### Tape Extensions
     AWS format tape support
     TAR format tape support
+    ANSI-VMS, ANSI-RSX11, ANSI-RSTS, ANSI-RT11 format tape support
 
 #### Embedded ROM support
     Simulators which have boot commands which load constant files as part of 

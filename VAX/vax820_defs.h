@@ -149,13 +149,13 @@
 #define LP_MBZ84_TEST(r)
 #define LP_MBZ92_TEST(r)
 #define MT_AST_TEST(r)  r = (r) & 07; \
-                        if ((r) > AST_MAX) RSVD_OPND_FAULT
+                        if ((r) > AST_MAX) RSVD_OPND_FAULT(MT_AST_TEST)
 
 /* CPU */
 
 #define CPU_MODEL_MODIFIERS                                                                     \
                         { MTAB_XTD|MTAB_VDV, 0, "MODEL", "MODEL={8200|8250}",                   \
-                              &cpu_set_model, &cpu_show_model, NULL, "Set/Display processor model" }
+                              &cpu_set_model, &cpu_show_model, NULL, "Set/Display processor model" },
 
 /* Memory */
 
@@ -181,6 +181,7 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 /* Node window space */
 
 #define WINAWIDTH       18                              /* VAXBI node window width */
+#define WINSIZE         (1u << WINAWIDTH)               /* VAXBI node window length */
 #define WINBASE         0x20400000                      /* VAXBI node window base */
 #define WINADDR(n)      (WINBASE + (n << WINAWIDTH))    /* node -> window addr */
 

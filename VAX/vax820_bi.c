@@ -46,6 +46,11 @@
 #define WCSD_WR         0xFFFFFFFF                      /* write */
 #define MBRK_RW         0x1FFF                          /* microbreak */
 
+/* Accelerator control/status register */
+
+#define ACCS_ON         0x1                             /* enable F-chip */ 
+#define ACCS_RW         (ACCS_ON)
+
 /* KA820 boot device definitions */
 
 struct boot_dev {
@@ -60,6 +65,7 @@ uint32 nexus_req[NEXUS_HLVL];                           /* nexus int req */
 int32 ipr_int = 0;
 int32 rxcd_int = 0;
 int32 ipir = 0;
+int32 accs = 0;
 int32 sys_model = 0;
 int32 mchk_flag[KA_NUM] = { 0 };
 char cpu_boot_cmd[CBUFSIZE]  = { 0 };                   /* boot command */
@@ -326,8 +332,8 @@ switch (rg) {
         val = 0;
         break;
 
-    case MT_ACCS:                                       /* ACCS (not impl) */
-        val = 0;
+    case MT_ACCS:                                       /* ACCS */
+        val = accs & ACCS_RW;
         break;
 
     case MT_WCSA:                                       /* WCSA */
@@ -390,7 +396,7 @@ switch (rg) {
         break;
 
     default:
-        RSVD_OPND_FAULT;
+        RSVD_OPND_FAULT(ReadIPR);
         }
 
 return val;
@@ -441,7 +447,8 @@ switch (rg) {
         mchk_flag[cur_cpu] = 0;
         break;
 
-    case MT_ACCS:                                       /* ACCS (not impl) */
+    case MT_ACCS:                                       /* ACCS */
+        accs = val & ACCS_RW;
         break;
 
     case MT_WCSA:                                       /* WCSA */
@@ -470,7 +477,7 @@ switch (rg) {
         break;
 
     default:
-        RSVD_OPND_FAULT;
+        RSVD_OPND_FAULT(WriteIPR);
         }
 
 return;
@@ -518,6 +525,7 @@ for (p = &regtable[0]; p->low != 0; p++) {
     if ((pa >= p->low) && (pa < p->high) && p->read)
         return p->read (pa);
     }
+MACH_CHECK (MCHK_BIERR);                                /* machine check */
 return 0;
 } 
 
@@ -637,6 +645,8 @@ t_stat r;
 
 if (!ptr || !*ptr)
     return SCPE_2FARG;
+if ((ptr = get_sim_sw (ptr)) == NULL)                   /* get switches */
+    return SCPE_INVSW;
 regptr = get_glyph (ptr, gbuf, 0);                      /* get glyph */
 if ((slptr = strchr (gbuf, '/'))) {                     /* found slash? */
     regptr = strchr (ptr, '/');                         /* locate orig */
@@ -692,6 +702,7 @@ return SCPE_OK;
 
 t_stat bi_reset (DEVICE *dptr)
 {
+accs = ACCS_ON;                                         /* enabled by default */
 wcs_addr = 0;
 wcs_data = 0;
 ipr_int = 0;

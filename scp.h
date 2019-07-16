@@ -95,6 +95,8 @@ t_stat dir_cmd (int32 flg, CONST char *cptr);
 t_stat type_cmd (int32 flg, CONST char *cptr);
 t_stat delete_cmd (int32 flg, CONST char *cptr);
 t_stat copy_cmd (int32 flg, CONST char *cptr);
+t_stat mkdir_cmd (int32 flg, CONST char *cptr);
+t_stat rmdir_cmd (int32 flg, CONST char *cptr);
 t_stat brk_cmd (int32 flag, CONST char *ptr);
 t_stat do_cmd (int32 flag, CONST char *ptr);
 t_stat goto_cmd (int32 flag, CONST char *ptr);
@@ -420,6 +422,8 @@ extern t_addr (*sim_vm_parse_addr) (DEVICE *dptr, CONST char *cptr, CONST char *
 extern t_bool (*sim_vm_fprint_stopped) (FILE *st, t_stat reason);
 extern t_value (*sim_vm_pc_value) (void);
 extern t_bool (*sim_vm_is_subroutine_call) (t_addr **ret_addrs);
+extern const char **sim_clock_precalibrate_commands;
+
 
 /* Core SCP libraries can potentially have unit test routines.
    These defines help implement consistent unit test functionality */

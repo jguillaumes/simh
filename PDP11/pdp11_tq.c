@@ -1209,8 +1209,13 @@ if ((uptr = tq_getucb (lu))) {                          /* unit exist? */
     if (sts == ST_SUC) {                                /* ok? */
         uptr->cpkt = pkt;                               /* op in progress */
         if ((tq_pkt[pkt].d[CMD_MOD] & MD_RWD) &&        /* rewind? */
-            (!(tq_pkt[pkt].d[CMD_MOD] & MD_IMM)))       /* !immediate? */
-            sim_activate_after (uptr, 2000000);         /* use 2 sec rewind execute time */
+            (!(tq_pkt[pkt].d[CMD_MOD] & MD_IMM))) {     /* !immediate? */
+            double walltime = (tq_rwtime - 100);
+
+            if (uptr->hwmark)
+                walltime *= ((double)uptr->pos)/uptr->hwmark;
+            sim_activate_after_d (uptr, 100 + walltime);/* use scaled 2 sec rewind execute time */
+            }
         else {                                          /* otherwise */
             uptr->iostarttime = sim_grtime();
             sim_activate (uptr, 0);                     /* use normal execute time */

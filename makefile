@@ -107,6 +107,13 @@ ifneq (,$(findstring besm6,$(MAKECMDGOALS)))
   VIDEO_USEFUL = true
   BESM6_BUILD = true
 endif
+# building the KA10 needs video support
+ifneq (,$(or $(findstring pdp6,$(MAKECMDGOALS)),$(findstring pdp10-ka,$(MAKECMDGOALS)),$(findstring pdp10-ki,$(MAKECMDGOALS))))
+  VIDEO_USEFUL = true
+endif
+ifneq (,$(or $(findstring pdp10-ka,$(MAKECMDGOALS)),$(findstring pdp10-ki,$(MAKECMDGOALS))))
+  NETWORK_USEFUL = true
+endif
 # building the pdp11, pdp10, or any vax simulator could use networking support
 ifneq (,$(or $(findstring pdp11,$(MAKECMDGOALS)),$(findstring pdp10,$(MAKECMDGOALS)),$(findstring vax,$(MAKECMDGOALS)),$(findstring 3b2,$(MAKECMDGOALS))$(findstring all,$(MAKECMDGOALS))))
   NETWORK_USEFUL = true
@@ -581,6 +588,7 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
           VIDEO_FEATURES = - video capabilities provided by libSDL2 (Simple Directmedia Layer)
           DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/sim_ws.c
           DISPLAYVT = ${DISPLAYD}/vt11.c
+          DISPLAY340 = ${DISPLAYD}/type340.c
           DISPLAYNG = ${DISPLAYD}/ng.c
           DISPLAY_OPT += -DUSE_DISPLAY $(VIDEO_CCDEFS) $(VIDEO_LDFLAGS)
           $(info using libSDL2: $(call find_include,SDL2/SDL))
@@ -605,6 +613,7 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
             VIDEO_FEATURES = - video capabilities provided by libSDL (Simple Directmedia Layer)
             DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/sim_ws.c
             DISPLAYVT = ${DISPLAYD}/vt11.c
+            DISPLAY340 = ${DISPLAYD}/type340.c
             DISPLAYNG = ${DISPLAYD}/ng.c
             DISPLAY_OPT += -DUSE_DISPLAY $(VIDEO_CCDEFS) $(VIDEO_LDFLAGS)
             $(info using libSDL: $(call find_include,SDL/SDL))
@@ -877,8 +886,8 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
     endif
     NETWORK_OPT = $(NETWORK_CCDEFS)
   endif
-  ifneq (binexists,$(shell if $(TEST) -e BIN; then echo binexists; fi))
-    MKDIRBIN = mkdir -p BIN
+  ifneq (binexists,$(shell if $(TEST) -e BIN/buildtools; then echo binexists; fi))
+    MKDIRBIN = @mkdir -p BIN/buildtools
   endif
   ifeq (commit-id-exists,$(shell if $(TEST) -e .git-commit-id; then echo commit-id-exists; fi))
     GIT_COMMIT_ID=$(shell grep 'SIM_GIT_COMMIT_ID' .git-commit-id | awk '{ print $$2 }')
@@ -994,8 +1003,10 @@ else
   OS_CCDEFS += -fms-extensions $(PTHREADS_CCDEFS)
   OS_LDFLAGS += -lm -lwsock32 -lwinmm $(PTHREADS_LDFLAGS)
   EXE = .exe
-  ifneq (binexists,$(shell if exist BIN echo binexists))
-    MKDIRBIN = if not exist BIN mkdir BIN
+  ifneq (clean,$(MAKECMDGOALS))
+    ifneq (buildtoolsexists,$(shell if exist BIN\buildtools (echo buildtoolsexists) else (mkdir BIN\buildtools)))
+      MKDIRBIN=
+    endif
   endif
   ifneq ($(USE_NETWORK),)
     NETWORK_OPT += -DUSE_SHARED
@@ -1175,6 +1186,9 @@ ifneq (3,$(GCC_MAJOR_VERSION))
   ifneq (,$(findstring -Wunused-result,$(shell $(GCC_WARNINGS_CMD))))
     CFLAGS_O += -Wno-unused-result
   endif
+  ifneq (,$(findstring -Wformat-truncation,$(shell $(GCC_WARNINGS_CMD))))
+    CFLAGS_O += -Wno-format-truncation
+  endif
 endif
 ifneq (clean,$(MAKECMDGOALS))
   BUILD_FEATURES := $(BUILD_FEATURES). $(COMPILER_NAME)
@@ -1203,7 +1217,7 @@ endif
 ifneq ($(DONT_USE_ROMS),)
   ROMS_OPT = -DDONT_USE_INTERNAL_ROM
 else
-  BUILD_ROMS = ${BIN}BuildROMs${EXE}
+  BUILD_ROMS = ${BIN}buildtools/BuildROMs${EXE}
 endif
 ifneq ($(DONT_USE_READER_THREAD),)
   NETWORK_OPT += -DDONT_USE_READER_THREAD
@@ -1866,6 +1880,60 @@ ifneq (,$(BESM6_BUILD))
     endif
 endif
 
+PDP6D = PDP10
+ifneq (,$(DISPLAY_OPT))
+  PDP6_DISPLAY_OPT = 
+endif
+PDP6 = ${PDP6D}/kx10_cpu.c ${PDP6D}/kx10_sys.c ${PDP6D}/kx10_cty.c \
+	${PDP6D}/kx10_lp.c ${PDP6D}/kx10_pt.c ${PDP6D}/kx10_cr.c \
+	${PDP6D}/kx10_cp.c ${PDP6D}/pdp6_dct.c ${PDP6D}/pdp6_dtc.c \
+	${PDP6D}/pdp6_mtc.c ${PDP6D}/pdp6_dsk.c ${PDP6D}/pdp6_dcs.c \
+	${PDP6D}/kx10_dpy.c ${DISPLAYL} $(DISPLAY340)
+PDP6_OPT = -DPDP6=1 -DUSE_INT64 -I $(PDP6D) -DUSE_SIM_CARD $(DISPLAY_OPT) $(PDP6_DISPLAY_OPT)
+
+KA10D = PDP10
+ifneq (,$(DISPLAY_OPT))
+  KA10_DISPLAY_OPT = 
+endif
+KA10 = ${KA10D}/kx10_cpu.c ${KA10D}/kx10_sys.c ${KA10D}/kx10_df.c \
+	${KA10D}/kx10_dp.c ${KA10D}/kx10_mt.c ${KA10D}/kx10_cty.c \
+	${KA10D}/kx10_lp.c ${KA10D}/kx10_pt.c ${KA10D}/kx10_dc.c \
+	${KA10D}/kx10_rp.c ${KA10D}/kx10_rc.c ${KA10D}/kx10_dt.c \
+	${KA10D}/kx10_dk.c ${KA10D}/kx10_cr.c ${KA10D}/kx10_cp.c \
+	${KA10D}/kx10_tu.c ${KA10D}/kx10_rs.c ${KA10D}/ka10_pd.c \
+	${KA10D}/kx10_imp.c ${KA10D}/ka10_tk10.c ${KA10D}/ka10_mty.c \
+	${KA10D}/ka10_imx.c ${KA10D}/ka10_ch10.c ${KA10D}/ka10_stk.c \
+	${KA10D}/ka10_ten11.c ${KA10D}/ka10_auxcpu.c $(KA10D)/ka10_pmp.c \
+	${KA10D}/ka10_dkb.c ${KA10D}/pdp6_dct.c ${KA10D}/pdp6_dtc.c \
+	${KA10D}/pdp6_mtc.c ${KA10D}/pdp6_dsk.c ${KA10D}/pdp6_dcs.c \
+	${KA10D}/ka10_dpk.c ${KA10D}/kx10_dpy.c ${DISPLAYL} $(DISPLAY340)
+KA10_OPT = -DKA=1 -DUSE_INT64 -I $(KA10D) -DUSE_SIM_CARD ${NETWORK_OPT} $(DISPLAY_OPT) $(KA10_DISPLAY_OPT)
+ifneq ($(PANDA_LIGHTS),)
+# ONLY for Panda display.
+KA10_OPT += -DPANDA_LIGHTS
+KA10 += ${KA10D}/ka10_lights.c
+KA10_LDFLAGS += -lusb-1.0
+endif
+
+KI10D = PDP10
+ifneq (,$(DISPLAY_OPT))
+KI10_DISPLAY_OPT = 
+endif
+KI10 = ${KI10D}/kx10_cpu.c ${KI10D}/kx10_sys.c ${KI10D}/kx10_df.c \
+	${KI10D}/kx10_dp.c ${KI10D}/kx10_mt.c ${KI10D}/kx10_cty.c \
+	${KI10D}/kx10_lp.c ${KI10D}/kx10_pt.c ${KI10D}/kx10_dc.c  \
+	${KI10D}/kx10_rp.c ${KI10D}/kx10_rc.c ${KI10D}/kx10_dt.c \
+	${KI10D}/kx10_dk.c ${KI10D}/kx10_cr.c ${KI10D}/kx10_cp.c \
+	${KI10D}/kx10_tu.c ${KI10D}/kx10_rs.c ${KI10D}/kx10_imp.c \
+	${KI10D}/kx10_dpy.c ${DISPLAYL} $(DISPLAY340)
+KI10_OPT = -DKI=1 -DUSE_INT64 -I $(KI10D) -DUSE_SIM_CARD ${NETWORK_OPT} $(DISPLAY_OPT) $(KI10_DISPLAY_OPT)
+ifneq ($(PANDA_LIGHTS),)
+# ONLY for Panda display.
+KI10_OPT += -DPANDA_LIGHTS
+KI10 += ${KA10D}/ka10_lights.c
+KI10_LDFLAGS = -lusb-1.0
+endif
+
 ###
 ### Experimental simulators
 ###
@@ -1920,8 +1988,10 @@ ATT3B2 = ${ATT3B2D}/3b2_cpu.c ${ATT3B2D}/3b2_mmu.c \
 	${ATT3B2D}/3b2_id.c ${ATT3B2D}/3b2_dmac.c \
 	${ATT3B2D}/3b2_sys.c ${ATT3B2D}/3b2_io.c \
 	${ATT3B2D}/3b2_ports.c ${ATT3B2D}/3b2_ctc.c \
-	${ATT3B2D}/3b2_ni.c ${ATT3B2D}/3b2_sysdev.c
+	${ATT3B2D}/3b2_ni.c ${ATT3B2D}/3b2_mau.c \
+	${ATT3B2D}/3b2_sysdev.c
 ATT3B2_OPT = -DUSE_INT64 -DUSE_ADDR64 -I ${ATT3B2D} ${NETWORK_OPT}
+
 #
 # Build everything (not the unsupported/incomplete or experimental simulators)
 #
@@ -1935,7 +2005,7 @@ ALL = pdp1 pdp4 pdp7 pdp8 pdp9 pdp15 pdp11 pdp10 \
 	i7094 ibm1130 id16 id32 sds lgp h316 cdc1700 \
 	swtp6800mp-a swtp6800mp-a2 tx-0 ssem b5500 isys8010 isys8020 \
 	isys8030 isys8024 imds-225 scelbi 3b2 i701 i704 i7010 i7070 i7080 i7090 \
-	sigma uc15
+	sigma uc15 pdp10-ka pdp10-ki pdp6
 
 all : ${ALL}
 
@@ -1945,29 +2015,19 @@ experimental : $(EXPERIMENTAL)
 
 clean :
 ifeq ($(WIN32),)
-	${RM} -r ${BIN}
+	${RM} -rf ${BIN}
 else
-	if exist BIN\*.exe del /q BIN\*.exe
-	if exist BIN rmdir BIN
+	if exist BIN rmdir /s /q BIN
 endif
 
-${BIN}BuildROMs${EXE} :
+${BUILD_ROMS} : 
 	${MKDIRBIN}
-ifeq (agcc,$(findstring agcc,$(firstword $(CC))))
-	gcc $(wordlist 2,1000,${CC}) sim_BuildROMs.c $(CC_OUTSPEC)
-else
-	${CC} sim_BuildROMs.c $(CC_OUTSPEC)
-endif
 ifeq ($(WIN32),)
-	$@
-	${RM} $@
-  ifeq (Darwin,$(OSTYPE)) # remove Xcode's debugging symbols folder too
-	${RM} -rf $@.dSYM
-  endif
+	@if $(TEST) \( ! -e $@ \) -o \( sim_BuildROMs.c -nt $@ \) ; then ${CC} sim_BuildROMs.c $(CC_OUTSPEC); fi
 else
-	$(@D)\$(@F)
-#	del $(@D)\$(@F)
+	@if not exist $@ ${CC} sim_BuildROMs.c $(CC_OUTSPEC)
 endif
+	@$@
 
 #
 # Individual builds
@@ -2035,7 +2095,7 @@ ifneq (,$(call find_test,${PDP10D},pdp10))
 	$@ $(call find_test,${PDP10D},pdp10) $(TEST_ARG)
 endif
 
-pdp11 : ${BIN}BuildROMs${EXE} ${BIN}pdp11${EXE}
+pdp11 : ${BIN}pdp11${EXE}
 
 ${BIN}pdp11${EXE} : ${PDP11} ${SIM}
 	${MKDIRBIN}
@@ -2055,7 +2115,7 @@ endif
 
 vax : microvax3900
 
-microvax3900 : ${BIN}BuildROMs${EXE} ${BIN}microvax3900${EXE}
+microvax3900 : ${BIN}microvax3900${EXE}
 
 ${BIN}microvax3900${EXE} : ${VAX} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2069,79 +2129,79 @@ ifneq (,$(call find_test,$(VAXD),vax-diag))
 	$@ $(call find_test,$(VAXD),vax-diag) $(TEST_ARG)
 endif
 
-microvax2000 : ${BIN}BuildROMs${EXE} ${BIN}microvax2000${EXE}
+microvax2000 : ${BIN}microvax2000${EXE}
 
 ${BIN}microvax2000${EXE} : ${VAX410} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX410} ${SCSI} ${SIM} ${VAX410_OPT} -o $@ ${LDFLAGS}
 
-infoserver100 : ${BIN}BuildROMs${EXE} ${BIN}infoserver100${EXE}
+infoserver100 : ${BIN}infoserver100${EXE}
 
 ${BIN}infoserver100${EXE} : ${VAX420} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX420} ${SCSI} ${SIM} ${VAX411_OPT} -o $@ ${LDFLAGS}
 
-infoserver150vxt : ${BIN}BuildROMs${EXE} ${BIN}infoserver150vxt${EXE}
+infoserver150vxt : ${BIN}infoserver150vxt${EXE}
 
 ${BIN}infoserver150vxt${EXE} : ${VAX420} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX420} ${SCSI} ${SIM} ${VAX412_OPT} -o $@ ${LDFLAGS}
 
-microvax3100 : ${BIN}BuildROMs${EXE} ${BIN}microvax3100${EXE}
+microvax3100 : ${BIN}microvax3100${EXE}
 
 ${BIN}microvax3100${EXE} : ${VAX420} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX420} ${SCSI} ${SIM} ${VAX41A_OPT} -o $@ ${LDFLAGS}
 
-microvax3100e : ${BIN}BuildROMs${EXE} ${BIN}microvax3100e${EXE}
+microvax3100e : ${BIN}microvax3100e${EXE}
 
 ${BIN}microvax3100e${EXE} : ${VAX420} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX420} ${SCSI} ${SIM} ${VAX41D_OPT} -o $@ ${LDFLAGS}
 
-vaxstation3100m30 : ${BIN}BuildROMs${EXE} ${BIN}vaxstation3100m30${EXE}
+vaxstation3100m30 : ${BIN}vaxstation3100m30${EXE}
 
 ${BIN}vaxstation3100m30${EXE} : ${VAX420} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX420} ${SCSI} ${SIM} ${VAX42A_OPT} -o $@ ${LDFLAGS}
 
-vaxstation3100m38 : ${BIN}BuildROMs${EXE} ${BIN}vaxstation3100m38${EXE}
+vaxstation3100m38 : ${BIN}vaxstation3100m38${EXE}
 
 ${BIN}vaxstation3100m38${EXE} : ${VAX420} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX420} ${SCSI} ${SIM} ${VAX42B_OPT} -o $@ ${LDFLAGS}
 
-vaxstation3100m76 : ${BIN}BuildROMs${EXE} ${BIN}vaxstation3100m76${EXE}
+vaxstation3100m76 : ${BIN}vaxstation3100m76${EXE}
 
 ${BIN}vaxstation3100m76${EXE} : ${VAX43} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX43} ${SCSI} ${SIM} ${VAX43_OPT} -o $@ ${LDFLAGS}
 
-vaxstation4000m60 : ${BIN}BuildROMs${EXE} ${BIN}vaxstation4000m60${EXE}
+vaxstation4000m60 : ${BIN}vaxstation4000m60${EXE}
 
 ${BIN}vaxstation4000m60${EXE} : ${VAX440} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX440} ${SCSI} ${SIM} ${VAX46_OPT} -o $@ ${LDFLAGS}
 
-microvax3100m80 : ${BIN}BuildROMs${EXE} ${BIN}microvax3100m80${EXE}
+microvax3100m80 : ${BIN}microvax3100m80${EXE}
 
 ${BIN}microvax3100m80${EXE} : ${VAX440} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX440} ${SCSI} ${SIM} ${VAX47_OPT} -o $@ ${LDFLAGS}
 
-vaxstation4000vlc : ${BIN}BuildROMs${EXE} ${BIN}vaxstation4000vlc${EXE}
+vaxstation4000vlc : ${BIN}vaxstation4000vlc${EXE}
 
 ${BIN}vaxstation4000vlc${EXE} : ${VAX440} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${VAX440} ${SCSI} ${SIM} ${VAX48_OPT} -o $@ ${LDFLAGS}
 
-infoserver1000 : ${BIN}BuildROMs${EXE} ${BIN}infoserver1000${EXE}
+infoserver1000 : ${BIN}infoserver1000${EXE}
 
 ${BIN}infoserver1000${EXE} : ${IS1000} ${SCSI} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${IS1000} ${SCSI} ${SIM} ${IS1000_OPT} -o $@ ${LDFLAGS}
 
-microvax1 : ${BIN}BuildROMs${EXE} ${BIN}microvax1${EXE}
+microvax1 : ${BIN}microvax1${EXE}
 
 ${BIN}microvax1${EXE} : ${VAX610} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2150,7 +2210,7 @@ ifneq (,$(call find_test,$(VAXD),vax-diag))
 	$@ $(call find_test,$(VAXD),vax-diag) $(TEST_ARG)
 endif
 
-rtvax1000 : ${BIN}BuildROMs${EXE} ${BIN}rtvax1000${EXE}
+rtvax1000 : ${BIN}rtvax1000${EXE}
 
 ${BIN}rtvax1000${EXE} : ${VAX630} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2159,7 +2219,7 @@ ifneq (,$(call find_test,$(VAXD),vax-diag))
 	$@ $(call find_test,$(VAXD),vax-diag) $(TEST_ARG)
 endif
 
-microvax2 : ${BIN}BuildROMs${EXE} ${BIN}microvax2${EXE}
+microvax2 : ${BIN}microvax2${EXE}
 
 ${BIN}microvax2${EXE} : ${VAX630} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2168,7 +2228,7 @@ ifneq (,$(call find_test,$(VAXD),vax-diag))
 	$@ $(call find_test,$(VAXD),vax-diag) $(TEST_ARG)
 endif
 
-vax730 : ${BIN}BuildROMs${EXE} ${BIN}vax730${EXE}
+vax730 : ${BIN}vax730${EXE}
 
 ${BIN}vax730${EXE} : ${VAX730} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2177,7 +2237,7 @@ ifneq (,$(call find_test,$(VAXD),vax-diag))
 	$@ $(call find_test,$(VAXD),vax-diag) $(TEST_ARG)
 endif
 
-vax750 : ${BIN}BuildROMs${EXE} ${BIN}vax750${EXE}
+vax750 : ${BIN}vax750${EXE}
 
 ${BIN}vax750${EXE} : ${VAX750} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2186,7 +2246,7 @@ ifneq (,$(call find_test,$(VAXD),vax-diag))
 	$@ $(call find_test,$(VAXD),vax-diag) $(TEST_ARG)
 endif
 
-vax780 : ${BIN}BuildROMs${EXE} ${BIN}vax780${EXE}
+vax780 : ${BIN}vax780${EXE}
 
 ${BIN}vax780${EXE} : ${VAX780} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2204,7 +2264,7 @@ ifneq (,$(call find_test,$(VAXD),vax-diag))
 	$@ $(call find_test,$(VAXD),vax-diag) $(TEST_ARG)
 endif
 
-vax8600 : ${BIN}BuildROMs${EXE} ${BIN}vax8600${EXE}
+vax8600 : ${BIN}vax8600${EXE}
 
 ${BIN}vax8600${EXE} : ${VAX8600} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2384,7 +2444,7 @@ ifneq (,$(call find_test,${SDSD},sds))
 	$@ $(call find_test,${SDSD},sds) $(TEST_ARG)
 endif
 
-swtp6800mp-a : ${BIN}BuildROMs${EXE} ${BIN}swtp6800mp-a${EXE}
+swtp6800mp-a : ${BIN}swtp6800mp-a${EXE}
 
 ${BIN}swtp6800mp-a${EXE} : ${SWTP6800MP-A} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2393,7 +2453,7 @@ ifneq (,$(call find_test,${SWTP6800D},swtp6800mp-a))
 	$@ $(call find_test,${SWTP6800D},swtp6800mp-a) $(TEST_ARG)
 endif
 
-swtp6800mp-a2 : ${BIN}BuildROMs${EXE} ${BIN}swtp6800mp-a2${EXE}
+swtp6800mp-a2 : ${BIN}swtp6800mp-a2${EXE}
 
 ${BIN}swtp6800mp-a2${EXE} : ${SWTP6800MP-A2} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2559,7 +2619,7 @@ ifneq (,$(call find_test,${B5500D},b5500))
 	$@ $(call find_test,${B5500D},b5500) $(TEST_ARG)
 endif
 
-3b2 : ${BIN}BuildROMs${EXE} $(BIN)3b2$(EXE)
+3b2 : $(BIN)3b2$(EXE)
  
 ${BIN}3b2${EXE} : ${ATT3B2} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2630,6 +2690,34 @@ ${BIN}i650${EXE} : ${I650} ${SIM}
 ifneq (,$(call find_test,${I650D},i650))
 	$@ $(call find_test,${I650D},i650) $(TEST_ARG)
 endif
+
+pdp6 : ${BIN}pdp6${EXE}
+
+${BIN}pdp6${EXE} : ${PDP6} ${SIM}
+	${MKDIRBIN}
+	${CC} ${PDP6} ${PDP6_DPY} ${SIM} ${PDP6_OPT} $(CC_OUTSPEC) ${LDFLAGS} ${PDP6_LDFLAGS}
+ifneq (,$(call find_test,${PDP10D},pdp6))
+	$@ $(call find_test,${PDP10D},pdp6) $(TEST_ARG)
+endif
+
+pdp10-ka : ${BIN}pdp10-ka${EXE}
+
+${BIN}pdp10-ka${EXE} : ${KA10} ${SIM}
+	${MKDIRBIN}
+	${CC} ${KA10} ${KA10_DPY} ${SIM} ${KA10_OPT} $(CC_OUTSPEC) ${LDFLAGS} ${KA10_LDFLAGS}
+ifneq (,$(call find_test,${PDP10D},ka10))
+	$@ $(call find_test,${PDP10D},ka10) $(TEST_ARG)
+endif
+
+pdp10-ki : ${BIN}pdp10-ki${EXE}
+
+${BIN}pdp10-ki${EXE} : ${KI10} ${SIM}
+	${MKDIRBIN}
+	${CC} ${KI10} ${KI10_DPY} ${SIM} ${KI10_OPT} $(CC_OUTSPEC) ${LDFLAGS} ${KI10_LDFLAGS}
+ifneq (,$(call find_test,${PDP10D},ki10))
+	$@ $(call find_test,${PDP10D},ki10) $(TEST_ARG)
+endif
+
 
 # Front Panel API Demo/Test program
 

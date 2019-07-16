@@ -80,7 +80,7 @@ CTAB vax420_cmd[] = {
 #define CFGT_VID        0x0008                          /* video option present */
 #define CFGT_CUR        0x0010                          /* cursor test */
 #define CFGT_L3C        0x0020                          /* line 3 console */
-#define CFGT_NET        0x0040                          /* network option present */
+#define CFGT_CACHE      0x0040                          /* cache present */
 #define CFGT_TYP        0x0080                          /* system type */
 #define CFGT_V_DSK      8
 #define CFGT_M_DSK      0xF
@@ -101,7 +101,7 @@ CTAB vax420_cmd[] = {
 #define MSER_MCD0       0x00000100                      /* Mem Code 0 */
 #define MSER_MBZ        0xFFFFFEBC
 #define MSER_RD         (MSER_PE | MSER_WWP | MSER_PER | \
-                         MSER_PER | MSER_MCD0)
+                         MSER_MCD0)
 #define MSER_WR         (MSER_PE | MSER_WWP)
 #define MSER_W1C        (MSER_PER)
 
@@ -120,7 +120,6 @@ extern int32 tmr_poll;
 extern uint32 vc_sel, vc_org;
 extern DEVICE rd_dev;
 extern DEVICE va_dev, vc_dev, ve_dev, lk_dev, vs_dev;
-extern DEVICE xs_dev;
 extern uint32 *rom;
 
 uint32 *ddb = NULL;                                     /* 128k disk buffer */
@@ -1023,9 +1022,6 @@ if (*rom == 0) {                                        /* no boot? */
 #if defined (VAX_41A) || defined (VAX_41D)
 rom_wr_B (ROMBASE+4, sys_model ? 2 : 1);                /* Set Magic Byte to determine system type */
 #endif
-#if defined (VAX_41A)
-rom_wr_B (ROMBASE+7, 8);                                /* ROM goes into endless loop without this? */
-#endif
 for (i = 0; i < OR_COUNT; i++)                          /* unmap all option ROMs */
     or_unmap (i);
 for (i = 0; (cdptr = sim_devices[i]) != NULL; i++) {    /* loop over all devices */
@@ -1051,7 +1047,7 @@ ka_mser = 0;
 ka_mear = 0;
 ka_led = 0;
 ka_pctl = 0;
-ka_cfgtst = (CFGT_TYP | CFGT_CUR);
+ka_cfgtst = (CFGT_CACHE | CFGT_TYP | CFGT_CUR);
 ka_cfgtst |= ((MEMSIZE >> 22) - 1);                     /* memory option */
 if ((vc_dev.flags & DEV_DIS) == 0)                      /* mono video enabled? */
     ka_cfgtst &= ~CFGT_TYP;
@@ -1063,8 +1059,6 @@ if ((ve_dev.flags & DEV_DIS) == 0) {                    /* video option present?
     ka_cfgtst &= ~CFGT_TYP;
     ka_cfgtst |= CFGT_VID;
     }
-if ((xs_dev.flags & DEV_DIS) == 0)                      /* network option present? */
-    ka_cfgtst |= CFGT_NET;
 if ((rd_dev.flags & DEV_DIS) == 0)                      /* storage option */
     ka_cfgtst |= (STC_ST506 << CFGT_V_STC);
 if (DZ_L3C && (sys_model == 0))                         /* line 3 console */
