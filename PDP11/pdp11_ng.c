@@ -54,7 +54,7 @@ const char *ng_description (DEVICE *dptr);
 #define IOLN_NG   4
 DIB ng_dib = {
   IOBA_AUTO, IOLN_NG, &ng_rd, &ng_wr,
-  4, IVCL(NG), VEC_AUTO, {NULL}, IOLN_NG
+  1, IVCL(NG), VEC_AUTO, {NULL}, IOLN_NG
 };
 
 UNIT ng_unit = {
@@ -64,7 +64,7 @@ UNIT ng_unit = {
 REG ng_reg[] = {
   { DRDATAD (CYCLE, ng_unit.wait, 24, "NG cycle"), REG_NZ + PV_LEFT },
   { GRDATAD(TYPE, ng_type, 16, 16, 0, "Hardware type"), REG_FIT},
-  { GRDATAD(SCALE, ng_scale, 16, 16, 0, "Hardware type"), REG_FIT},
+  { GRDATAD(SCALE, ng_scale, 16, 16, 0, "Pixel Scale Factor"), REG_FIT},
   { NULL }
 };
 

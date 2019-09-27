@@ -1861,6 +1861,8 @@ t_stat sim_instr(void)
             cpu_exception_stack_depth--;
         }
 
+        AIO_CHECK_EVENT;
+
         if (sim_interval-- <= 0) {
             if ((stop_reason = sim_process_event())) {
                 break;
@@ -2127,6 +2129,11 @@ t_stat sim_instr(void)
             break;
         case BRB:
             pc_incr = sign_extend_b(dst->embedded.b);
+            /* BRB is commonly used to halt the processor in a tight
+             * infinite loop. */
+            if (pc_incr == 0) {
+                stop_reason = STOP_LOOP;
+            }
             break;
         case BSBH:
             cpu_push_word(R[NUM_PC] + pc_incr);
@@ -2213,30 +2220,31 @@ t_stat sim_instr(void)
             cpu_set_v_flag(0);
             break;
         case CMPW:
-            a = cpu_read_op(src1);
-            b = cpu_read_op(src2);
-
-            cpu_set_z_flag((uint32)b == (uint32)a);
-            cpu_set_n_flag((int32)b < (int32)a);
-            cpu_set_c_flag((uint32)b < (uint32)a);
-            cpu_set_v_flag(0);
-            break;
         case CMPH:
-            a = cpu_read_op(src1);
-            b = cpu_read_op(src2);
-
-            cpu_set_z_flag((uint16)b == (uint16)a);
-            cpu_set_n_flag((int16)b < (int16)a);
-            cpu_set_c_flag((uint16)b < (uint16)a);
-            cpu_set_v_flag(0);
-            break;
         case CMPB:
             a = cpu_read_op(src1);
             b = cpu_read_op(src2);
 
-            cpu_set_z_flag((uint8)b == (uint8)a);
-            cpu_set_n_flag((int8)b < (int8)a);
-            cpu_set_c_flag((uint8)b < (uint8)a);
+            switch(op_type(src2)) {
+            case WD:
+            case UW:
+                cpu_set_n_flag((int32)b < (int32)a);
+                break;
+            case HW:
+            case UH:
+                cpu_set_n_flag((int16)b < (int16)a);
+                break;
+            case BT:
+            case SB:
+                cpu_set_n_flag((int8)b < (int8)a);
+                break;
+            default:
+                /* Unreachable */
+                break;
+            }
+
+            cpu_set_z_flag(b == a);
+            cpu_set_c_flag(b < a);
             cpu_set_v_flag(0);
             break;
         case DECW:
@@ -2554,7 +2562,7 @@ t_stat sim_instr(void)
             }
             break;
         case STREND:
-            while (read_b(R[0], ACC_AF) != 0) {
+            while (read_b(R[0], ACC_AF) != '\0') {
                 R[0]++;
             }
             break;
@@ -2907,7 +2915,6 @@ t_stat sim_instr(void)
             pc_incr = 0;
             break;
         case SPOP:
-            sim_debug(TRACE_DBG, &cpu_dev, "SPOP\n");
             /* Memory fault is signaled when no support processor is
                active */
             if (mau_broadcast(coprocessor_word, 0, 0) != SCPE_OK) {
@@ -2917,7 +2924,6 @@ t_stat sim_instr(void)
         case SPOPD2:
         case SPOPS2:
         case SPOPT2:
-            sim_debug(TRACE_DBG, &cpu_dev, "SPOP{D|S|T}2\n");
             a = cpu_effective_address(src1);
             b = cpu_effective_address(dst);
             if (mau_broadcast(coprocessor_word, a, b) != SCPE_OK) {
@@ -2927,7 +2933,6 @@ t_stat sim_instr(void)
         case SPOPRD:
         case SPOPRS:
         case SPOPRT:
-            sim_debug(TRACE_DBG, &cpu_dev, "SPOPR{D|S|T}\n");
             a = cpu_effective_address(src1);
             if (mau_broadcast(coprocessor_word, a, 0) != SCPE_OK) {
                 cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
@@ -2936,7 +2941,6 @@ t_stat sim_instr(void)
         case SPOPWD:
         case SPOPWS:
         case SPOPWT:
-            sim_debug(TRACE_DBG, &cpu_dev, "SPOPW{D|S|T}\n");
             a = cpu_effective_address(dst);
             if (mau_broadcast(coprocessor_word, 0, a) != SCPE_OK) {
                 cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
@@ -3017,15 +3021,19 @@ t_stat sim_instr(void)
             R[NUM_FP] = R[NUM_SP];
             break;
         case STRCPY:
-            a = 0;
-            b = 0;
-
-            do {
-                b = read_b(R[0] + a, ACC_AF);
-                write_b(R[1] + a, (uint8) b);
-                a++;
-            } while (b != '\0');
-
+            /* The STRCPY instruction will always copy the NULL
+             * terminator of a string. However, copying the NULL
+             * terminator never increments the source or destination
+             * pointer! */
+            while (1) {
+                a = read_b(R[0], ACC_AF);
+                write_b(R[1], (uint8) a);
+                if (a == '\0') {
+                    break;
+                }
+                R[0]++;
+                R[1]++;
+            }
             break;
         case TSTW:
             a = cpu_read_op(src1);
