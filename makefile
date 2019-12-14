@@ -503,7 +503,8 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
         OS_LDFLAGS += -L$(dir $(call find_lib,pcreposix))
       endif
     endif
-  else
+  endif
+  ifeq (,$(findstring DHAVE_PCREPOSIX_H,$(OS_CCDEFS)))
     # If libpcreposix isn't available, fall back to the local regex.h 
     # Presume that the local regex support is available in the C runtime 
     # without a specific reference to a library.  This may not be true on
@@ -1688,6 +1689,7 @@ ALTAIRZ80 = ${ALTAIRZ80D}/altairz80_cpu.c ${ALTAIRZ80D}/altairz80_cpu_nommu.c \
 	${ALTAIRZ80D}/s100_mdsad.c ${ALTAIRZ80D}/s100_selchan.c \
 	${ALTAIRZ80D}/s100_ss1.c ${ALTAIRZ80D}/s100_64fdc.c \
 	${ALTAIRZ80D}/s100_scp300f.c \
+	${ALTAIRZ80D}/s100_tarbell.c \
 	${ALTAIRZ80D}/wd179x.c ${ALTAIRZ80D}/s100_hdc1001.c \
 	${ALTAIRZ80D}/s100_if3.c ${ALTAIRZ80D}/s100_adcs6.c \
 	${ALTAIRZ80D}/m68kcpu.c ${ALTAIRZ80D}/m68kdasm.c \
