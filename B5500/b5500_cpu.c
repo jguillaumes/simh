@@ -95,7 +95,6 @@
 #include "b5500_defs.h"
 #include "sim_timer.h"
 #include <math.h>
-#include <time.h>
 
 #define UNIT_V_MSIZE    (UNIT_V_UF + 0)
 #define UNIT_MSIZE      (7 << UNIT_V_MSIZE)
@@ -307,7 +306,7 @@ REG                 cpu_reg[] = {
     {BRDATAD(R, r_reg, 8,15,2,   "PRT pointer/Tally")},
     {BRDATAD(P, p_reg, 8,48,2,   "Last code word cache")},
     {BRDATAD(T, t_reg, 8,12,2,   "Current instruction")},
-    {BRDATAD(Q, q_reg, 8,9,2,    "Error condition")},
+    {BRDATAD(Q, q_reg, 8,8,2,    "Error condition")},
     {BRDATA(AROF, arof_reg, 2,1,2)},
     {BRDATA(BROF, brof_reg, 2,1,2)},
     {BRDATA(PROF, prof_reg, 2,1,2)},
@@ -2001,6 +2000,7 @@ sim_instr(void)
             reason = sim_process_event();
             if (reason != SCPE_OK)
                  break; /* process */
+            sim_interval--;
         }
         /* Passed time quantum */
         if (sim_interval <= 0) {        /* event queue? */

@@ -23,7 +23,6 @@
    to the MIT Mathlab and Dynamic Modeling PDP-10s.
 */
 
-#include <time.h>
 #include "sim_defs.h"
 #include "sim_tmxr.h"
 #include "kx10_defs.h"
@@ -94,14 +93,12 @@ DEVICE mty_dev = {
     MTY_NAME, mty_unit, NULL, mty_mod,
     2, 8, 0, 1, 8, 36,
     NULL, NULL, mty_reset, NULL, mty_attach, mty_detach,
-    &mty_dib, DEV_DISABLE | DEV_DIS | DEV_DEBUG, 0, dev_debug,
+    &mty_dib, DEV_DISABLE | DEV_DIS | DEV_DEBUG | DEV_MUX, 0, dev_debug,
     NULL, NULL, mty_help, NULL, NULL, mty_description
 };
 
 static t_stat mty_devio(uint32 dev, uint64 *data)
 {
-    DEVICE *dptr = &mty_dev;
-    TMLN *lp;
     int line;
     uint64 word;
 
@@ -134,7 +131,6 @@ static t_stat mty_devio(uint32 dev, uint64 *data)
         word = *data;
         sim_debug(DEBUG_DATAIO, &mty_dev, "DATAO line %d -> %012llo\n",
                   line, word);
-        lp = &mty_ldsc[line];
         mty_output_word[line] = word | MTY_FIRST;
         mty_active_bitmask |= 1 << line;
         sim_activate_abs (&mty_unit[1], 0);
@@ -142,7 +138,6 @@ static t_stat mty_devio(uint32 dev, uint64 *data)
         break;
     case DATAI:
         line = (status & MTY_LINE) >> 12;
-        lp = &mty_ldsc[line];
         *data = mty_input_character;
         sim_debug(DEBUG_DATAIO, &mty_dev, "DATAI line %d -> %012llo\n",
                   line, *data);

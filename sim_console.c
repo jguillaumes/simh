@@ -183,7 +183,7 @@ int32 sim_del_char = '\b';                              /* delete character */
 int32 sim_del_char = 0177;
 #endif
 t_bool sim_signaled_int_char                            /* WRU character detected by signal while running */
-#if defined (_WIN32) || defined (_VMS) || defined (__CYGWIN__)
+#if defined (_WIN32) || defined (_VMS) || defined (__CYGWIN__) || (defined(USE_SIM_VIDEO) && defined(HAVE_LIBSDL))
                              = FALSE;
 #else
                              = TRUE;
@@ -437,7 +437,7 @@ if (*cptr == 0) {                                       /* show all */
 while (*cptr != 0) {
     cptr = get_glyph (cptr, gbuf, ',');                 /* get modifier */
     if ((shptr = find_shtab (show_con_tab, gbuf)))
-        shptr->action (st, dptr, uptr, shptr->arg, cptr);
+        shptr->action (st, dptr, uptr, shptr->arg, NULL);
     else return SCPE_NOPARAM;
     }
 return SCPE_OK;
@@ -639,9 +639,9 @@ for (i=connections=0; i<sim_rem_con_tmxr.lines; i++) {
         DEVICE *dptr = NULL;
 
         if (rem->smp_sample_dither_pct)
-            fprintf (st, "Register Bit Sampling is occurring every %d cycles (dithered %d percent)\n", rem->smp_sample_interval, rem->smp_sample_dither_pct);
+            fprintf (st, "Register Bit Sampling is occurring every %d %s (dithered %d percent)\n", rem->smp_sample_interval, sim_vm_interval_units, rem->smp_sample_dither_pct);
         else
-            fprintf (st, "Register Bit Sampling is occurring every %d cycles\n", rem->smp_sample_interval);
+            fprintf (st, "Register Bit Sampling is occurring every %d %s\n", rem->smp_sample_interval, sim_vm_interval_units);
         fprintf (st, " Registers being sampled are: ");
         for (reg = 0; reg < rem->smp_reg_count; reg++) {
             if (rem->smp_regs[reg].indirect)
@@ -750,7 +750,6 @@ static CTAB allowed_remote_cmds[] = {
     { "REPEAT",   &x_repeat_cmd,      0 },
     { "COLLECT",  &x_collect_cmd,     0 },
     { "SAMPLEOUT",&x_sampleout_cmd,   0 },
-    { "STEP",     &x_step_cmd,        0 },
     { "PWD",      &pwd_cmd,           0 },
     { "SAVE",     &save_cmd,          0 },
     { "DIR",      &dir_cmd,           0 },
@@ -772,11 +771,11 @@ static CTAB allowed_master_remote_cmds[] = {
     { "ASSIGN",   &assign_cmd,        0 },
     { "DEASSIGN", &deassign_cmd,      0 },
     { "CONTINUE", &x_continue_cmd,    0 },
+    { "STEP",     &x_step_cmd,        0 },
     { "REPEAT",   &x_repeat_cmd,      0 },
     { "COLLECT",  &x_collect_cmd,     0 },
     { "SAMPLEOUT",&x_sampleout_cmd,   0 },
     { "EXECUTE",  &x_execute_cmd,     0 },
-    { "STEP",     &x_step_cmd,        0 },
     { "PWD",      &pwd_cmd,           0 },
     { "SAVE",     &save_cmd,          0 },
     { "CD",       &set_default_cmd,   0 },
@@ -876,7 +875,6 @@ static void _sim_rem_log_out (TMLN *lp)
 {
 char cbuf[4*CBUFSIZE];
 REMOTE *rem = &sim_rem_consoles[(int)(lp - sim_rem_con_tmxr.ldsc)];
-int line = rem->line;
 
 if ((!sim_oline) && (sim_log)) {
     fflush (sim_log);
@@ -1407,7 +1405,8 @@ for (i=(was_active_command ? sim_rem_cmd_active_line : 0);
             sim_rem_cmd_active_line = -1;           /* Done with active command */
             if (!sim_rem_active_command) {          /* STEP command? */
                 stat = SCPE_STEP;
-                _sim_rem_message ("STEP", stat);    /* produce a STEP complete message */
+                if (sim_con_stable_registers || !sim_rem_master_mode)
+                    _sim_rem_message ("STEP", stat);/* produce a STEP complete message */
                 }
             _sim_rem_log_out (lp);
             sim_rem_active_command = NULL;          /* Restart loop to process available input */
@@ -1753,11 +1752,15 @@ for (i=(was_active_command ? sim_rem_cmd_active_line : 0);
                                             stat = sim_rem_collect_cmd_setup (i, &cptr);
                                             }
                                         else {
-                                            if (sim_con_stable_registers && 
-                                                sim_rem_master_mode) {  /* can we process command now? */
+                                            if ((sim_con_stable_registers &&    /* can we process command now? */
+                                                 sim_rem_master_mode) ||
+                                                (cmdp->action == &x_help_cmd)) {
                                                 sim_debug (DBG_CMD, &sim_remote_console, "Processing Command directly\n");
                                                 sim_oline = lp;         /* specify output socket */
-                                                sim_remote_process_command ();
+                                                if (cmdp->action == &x_help_cmd)
+                                                    x_help_cmd (0, cptr);
+                                                else
+                                                    sim_remote_process_command ();
                                                 stat = SCPE_OK;         /* any message has already been emitted */
                                                 }
                                             else {
@@ -1842,8 +1845,14 @@ if (sim_rem_master_was_connected &&                         /* Master mode ever 
     !sim_rem_con_tmxr.ldsc[0].sock)                         /* Master Connection lost? */
     return sim_messagef (SCPE_EXIT, "Master Session Disconnect");/* simulator has been 'unplugged' */
 if (sim_rem_cmd_active_line != -1) {
-    if (steps)
-        sim_activate(uptr, steps);                          /* check again after 'steps' instructions */
+    if (steps) {
+        if (!sim_con_stable_registers && sim_rem_master_mode) {
+            sim_step = steps;
+            sim_sched_step ();
+            }
+        else
+            sim_activate(uptr, steps);                      /* check again after 'steps' instructions */
+        }
     else
         return SCPE_REMOTE;                                 /* force sim_instr() to exit to process command */
     }
@@ -2009,6 +2018,13 @@ sprintf(cmdbuf, "BUFFERED=%d", bufsize);
 return tmxr_open_master (&sim_rem_con_tmxr, cmdbuf);        /* open master socket */
 }
 
+t_bool sim_is_remote_console_master_line (void *lp)
+{
+return sim_rem_master_mode &&                                           /* master mode */
+       (((TMLN *)lp) >= sim_rem_con_tmxr.ldsc) &&                       /* And it is one of the Remote Console Lines */
+       (((TMLN *)lp) < sim_rem_con_tmxr.ldsc + sim_rem_con_tmxr.lines);
+}
+
 /* Enable or disable Remote Console master mode */
 
 /* In master mode, commands are subsequently processed from the
@@ -2033,7 +2049,7 @@ else
     return sim_messagef (SCPE_INVREM, "Can't enable Remote Console Master mode with Remote Console disabled\n");
 
 if (sim_rem_master_mode) {
-    t_stat stat_nomessage;
+    t_stat stat_nomessage = 0;
 
     sim_messagef (SCPE_OK, "Command input starting on Master Remote Console Session\n");
     stat = sim_run_boot_prep (0);
@@ -2060,8 +2076,11 @@ if (sim_rem_master_mode) {
             }
         sim_rem_cmd_active_line = 0;                    /* Make it look like */
         sim_rem_consoles[0].single_mode = FALSE;
+        sim_cancel_step ();
         if (stat != SCPE_STEP)
             sim_rem_active_command = &allowed_single_remote_cmds[0];/* Dummy */
+        else
+            sim_activate_abs (rem_con_data_unit, 0);    /* force step completion processing */
         sim_last_cmd_stat = SCPE_BARE_STATUS(stat);     /* make exit status available to remote console */
         }
     sim_rem_master_was_enabled = FALSE;
@@ -2272,7 +2291,7 @@ t_stat sim_set_debon (int32 flag, CONST char *cptr)
 char gbuf[CBUFSIZE];
 t_stat r;
 time_t now;
-size_t buffer_size;
+size_t buffer_size = 0;
 
 if ((cptr == NULL) || (*cptr == 0))                     /* need arg */
     return SCPE_2FARG;
@@ -2296,7 +2315,7 @@ if (sim_deb_switches & SWMASK ('R')) {
     struct tm loc_tm, gmt_tm;
     time_t time_t_now;
 
-    clock_gettime(CLOCK_REALTIME, &sim_deb_basetime);
+    sim_rtcn_get_time(&sim_deb_basetime, 0);
     time_t_now = (time_t)sim_deb_basetime.tv_sec;
     /* Adjust the relative timebase to reflect the localtime GMT offset */
     loc_tm = *localtime (&time_t_now);
@@ -2935,14 +2954,14 @@ uint32 md = mode & TTUF_M_MODE;
 
 if (md != TTUF_MODE_8B) {
     uint32 par_mode = (mode >> TTUF_W_MODE) & TTUF_M_PAR;
-    static int32 nibble_even_parity = 0x699600;   /* bit array indicating the even parity for each index (offset by 8) */
+    static int32 nibble_even_parity = 0x699600;     /* bit array indicating the even parity for each index (offset by 8) */
 
     c = c & 0177;
     if (md == TTUF_MODE_UC) {
         if (islower (c))
             c = toupper (c);
         if (mode & TTUF_KSR)
-            c = c | 0200;
+            c = c | 0200;                           /* Force MARK parity */
         }
     switch (par_mode) {
         case TTUF_PAR_EVEN:
@@ -2956,7 +2975,8 @@ if (md != TTUF_MODE_8B) {
             break;
         }
     }
-else c = c & 0377;
+else
+    c = c & 0377;
 return c;
 }
 
@@ -3033,6 +3053,43 @@ for (i = any = 0; i < val; i++) {
         }
     }
 fprintf (st, (any? "\n": "no tabs set\n"));
+return SCPE_OK;
+}
+
+t_stat sim_tt_set_mode (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
+{
+uint32 par_mode = (TT_GET_MODE (uptr->flags) >> TTUF_W_MODE) & TTUF_M_PAR;
+
+uptr->flags = uptr->flags & ~((TTUF_M_MODE << TTUF_V_MODE) | (TTUF_M_PAR << TTUF_V_PAR) | TTUF_KSR);
+uptr->flags |= val;
+if (val != TT_MODE_8B)
+    uptr->flags |= (par_mode << TTUF_V_PAR);
+return SCPE_OK;
+}
+
+t_stat sim_tt_set_parity (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
+{
+uptr->flags = uptr->flags & ~(TTUF_M_MODE | TTUF_M_PAR);
+uptr->flags |= TT_MODE_7B | val;
+return SCPE_OK;
+}
+
+t_stat sim_tt_show_modepar (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
+{
+uint32 md = (TT_GET_MODE (uptr->flags) & TTUF_M_MODE);
+static const char *modes[] = {"7b", "8b", "UC", "7p"};
+uint32 par_mode = (TT_GET_MODE (uptr->flags) >> TTUF_W_MODE) & TTUF_M_PAR;
+static const char *parity[] = {"SPACE", "MARK", "EVEN", "ODD"};
+
+if ((md == TTUF_MODE_UC) && (par_mode == TTUF_PAR_MARK))
+    fprintf (st, "KSR (UC, MARK parity)");
+else
+    fprintf (st, "%s", modes[md]);
+if ((md != TTUF_MODE_8B) && 
+    ((md != TTUF_MODE_UC) || (par_mode != TTUF_PAR_MARK))) {
+    if (par_mode != 0)
+        fprintf (st, ", %s parity", parity[par_mode]);
+    }
 return SCPE_OK;
 }
 
@@ -3455,8 +3512,8 @@ if ((sim_ttisatty ()) &&
 if ((std_output) &&                                     /* If Not Background process? */
     (std_output != INVALID_HANDLE_VALUE)) {
     if (GetConsoleMode(std_output, &saved_output_mode))
-        if (!SetConsoleMode(std_output, ENABLE_VIRTUAL_TERMINAL_PROCESSING|ENABLE_PROCESSED_OUTPUT))
-            SetConsoleMode(std_output, ENABLE_PROCESSED_OUTPUT);
+        if (!SetConsoleMode(std_output, ENABLE_VIRTUAL_TERMINAL_PROCESSING|ENABLE_PROCESSED_OUTPUT|ENABLE_WRAP_AT_EOL_OUTPUT))
+            SetConsoleMode(std_output, ENABLE_PROCESSED_OUTPUT|ENABLE_WRAP_AT_EOL_OUTPUT);
     }
 if (sim_log) {
     fflush (sim_log);
@@ -4219,7 +4276,7 @@ static t_stat sim_os_putchar (int32 out)
 char c;
 
 c = out;
-(void)write (1, &c, 1);
+if (write (1, &c, 1)) {};
 return SCPE_OK;
 }
 

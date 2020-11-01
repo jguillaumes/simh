@@ -136,21 +136,11 @@
 
 // Local constants ...
 #define MAXLINKS        10      // maximum number of simultaneous connections
-//   This constant determines the longest possible IMP data payload that can be
-// sent. Most IMP messages are trivially small - 68 words or so - but, when one
-// IMP asks for a reload the neighbor IMP sends the entire memory image in a
-// single message!  That message is about 14K words long.
-//   The next thing you should worry about is whether the underlying IP network
-// can actually send a UDP packet of this size.  It turns out that there's no
-// simple answer to that - it'll be fragmented for sure, but as long as all
-// the fragments arrive intact then the destination should reassemble them.
-#define MAXDATA      16384      // longest possible IMP packet (in H316 words)
-
 // UDP connection data structure ...
 //   One of these blocks is allocated for every simulated modem link. 
 struct _UDP_LINK {
   t_bool  used;                 // TRUE if this UDP_LINK is in use
-  char    rhostport[64];        // Remote host:port
+  char    rhostport[90];        // Remote host:port
   char    lport[64];            // Local port 
   uint32  rxsequence;           // next message sequence number for receive
   uint32  txsequence;           // next message sequence number for transmit
@@ -217,6 +207,7 @@ t_stat udp_parse_remote (int32 link, const char *premote)
   // If the host name/IP is omitted then it defaults to "localhost".
   char *end;  int32 lport, rport;
   char host[64], port[16];
+
   if (*premote == '\0') return SCPE_2FARG;
   memset (udp_links[link].lport, 0, sizeof(udp_links[link].lport));
   memset (udp_links[link].rhostport, 0, sizeof(udp_links[link].rhostport));
@@ -243,16 +234,9 @@ t_stat udp_parse_remote (int32 link, const char *premote)
 
   if ((strcmp (udp_links[link].lport, port) == 0) && 
       (strcmp ("localhost", host) == 0))
-    fprintf(stderr,"WARNING - use different transmit and receive ports!\n");
+    return sim_messagef (SCPE_ARG, "WARNING - use different transmit and receive ports!\n");
 
   return SCPE_OK;
-}
-
-t_stat udp_error (int32 link, const char *msg)
-{
-  // This routine is called whenever a SOCKET_ERROR is returned for any I/O.
-  fprintf(stderr,"UDP%d - %s failed with error %d\n", link, msg, WSAGetLastError());
-  return SCPE_IOERR;
 }
 
 t_stat udp_create (DEVICE *dptr, const char *premote, int32 *pln)
@@ -335,7 +319,7 @@ t_stat udp_send (DEVICE *dptr, int32 link, uint16 *pdata, uint16 count)
 
   // Send it and we're outta here ...
   iret = tmxr_put_packet_ln (&udp_lines[link], (const uint8 *)&pkt, (size_t)pktlen);
-  if (iret != SCPE_OK) return udp_error(link, "tmxr_put_packet_ln()");
+  if (iret != SCPE_OK) return sim_messagef(iret, "UDP%d - tmxr_put_packet_ln() failed with error %s\n", link, sim_error_text(iret));
   sim_debug(IMP_DBG_UDP, dptr, "link %d - packet sent (sequence=%d, length=%d)\n", link, ntohl(pkt.sequence), ntohs(pkt.count));
   return SCPE_OK;
 }
@@ -369,7 +353,7 @@ int32 udp_receive_packet (int32 link, UDP_PACKET *ppkt)
   ret = tmxr_get_packet_ln (&udp_lines[link], &pbuf, &pktsiz);
   udp_lines[link].rcve = FALSE;          // Disable receiver
   if (ret != SCPE_OK) {
-    udp_error(link, "tmxr_get_packet_ln()");
+    sim_messagef (ret, "UDP%d - tmxr_get_packet_ln() failed with error %s\n", link, sim_error_text(ret));
     return NOLINK;
   }
   if (pbuf == NULL) return 0;

@@ -223,6 +223,7 @@ sim_instr(void)
                 else
                     break;      /* process */
             }
+            sim_interval--;
         }
 
         if (iowait == 0 && sim_brk_summ && sim_brk_test(IC, SWMASK('E'))) {
@@ -764,6 +765,9 @@ store:
 t_stat
 cpu_reset(DEVICE * dptr)
 {
+    extern void sys_init(void);
+
+    sys_init();
     AC = 0;
     MQ = 0;
     dualcore = 0;

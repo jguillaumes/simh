@@ -23,6 +23,8 @@
    in advertising or otherwise to promote the sale, use or other dealings in
    this Software without prior written authorization from the author.
 
+   27-Dec-18    JDB     Revised fall through comments to comply with gcc 7
+   29-May-18    JDB     Added a check for the "alternate" flag to "fmt_bitset"
    05-Sep-17    JDB     Removed the -B (binary display) option; use -2 instead
                         Rewrote "fprint_sym" for better coverage
    11-May-17    JDB     Corrected comment in "fprint_value"
@@ -79,6 +81,14 @@
 #include "hp3000_io.h"
 
 
+
+/* Global release string */
+
+const char *hp_vm_release = "8";                /* HP 3000 simulator release number */
+const char *hp_vm_release_message = 
+   "This is the last version of this simulator which is API compatible\n"
+   "with the 4.x version of the simh framework.  A supported version of\n"
+   "this simulator can be found at: http://simh.trailing-edge.com/hp\n";
 
 /* External I/O data structures */
 
@@ -964,7 +974,7 @@ static const char *const edit_ops [] = {        /* EDIT operation names */
 
 /* System interface local SCP support routines */
 
-static void   one_time_init  (void);
+void   hp_one_time_init  (void);
 static t_bool fprint_stopped (FILE   *st,   t_stat     reason);
 static void   fprint_addr    (FILE   *st,   DEVICE     *dptr, t_addr     addr);
 static t_addr parse_addr     (DEVICE *dptr, CONST char *cptr, CONST char **tptr);
@@ -1072,8 +1082,6 @@ char sim_name [] = "HP 3000";                   /* the simulator name */
 
 int32 sim_emax = 2;                             /* the maximum number of words in any instruction */
 
-void (*sim_vm_init) (void) = &one_time_init;    /* a pointer to the one-time initializer */
-
 DEVICE *sim_devices [] = {                      /* an array of pointers to the simulated devices */
     &cpu_dev,                                   /*   CPU (must be first) */
     &iop_dev,                                   /*   I/O Processor */
@@ -1091,7 +1099,7 @@ DEVICE *sim_devices [] = {                      /* an array of pointers to the s
 #define DEVICE_COUNT        (sizeof sim_devices / sizeof sim_devices [0] - 1)
 
 
-const char *sim_stop_messages [] = {            /* an array of pointers to the stop messages in STOP_nnn order */
+const char *sim_stop_messages [SCPE_BASE] = {   /* an array of pointers to the stop messages in STOP_nnn order */
     "Impossible error",                         /*   0 (never returned) */
     "System halt",                              /*   STOP_SYSHALT */
     "Unimplemented instruction",                /*   STOP_UNIMPL */
@@ -1958,7 +1966,7 @@ switch (opcode) {                                       /* dispatch by the exten
         else                                            /* otherwise */
             operand = NEG8 (operand);                   /*   negate the operand for display */
 
-    /* fall into the BRIS case */
+    /* fall through into the BRIS case */
 
     case 011:                                           /* BRIS - branch if significance */
         if (operand & D8_SIGN) {                        /* if the displacement is negative */
@@ -2663,9 +2671,17 @@ return (conflict_is != None);                           /* return TRUE if any co
    breakpoint types.
 */
 
-static void one_time_init (void)
+void hp_one_time_init (void)
 {
 CTAB *contab, *systab, *auxtab = aux_cmds;
+static int inited = 0;
+
+if (inited == 1)    /* Be sure to only do these things once */
+    return;
+inited = 1;
+
+sim_vm_release = hp_vm_release;
+sim_vm_release_message = hp_vm_release_message;
 
 contab = find_cmd ("CONT");                             /* find the entry for the CONTINUE command */
 
@@ -3490,7 +3506,7 @@ switch (ops [op_index].operand) {                       /* dispatch by the opera
         index = (instruction & X_FLAG) != 0;            /* save the index condition */
         indirect = (instruction & I_FLAG_BIT_5) != 0;   /*   and the indirect condition */
 
-    /* fall into the P-relative displacement case */
+    /* fall through into the P-relative displacement case */
 
     /* P +/- displacement range 0-255 */
 
@@ -3597,7 +3613,7 @@ switch (ops [op_index].operand) {                       /* dispatch by the opera
             break;
             }
 
-    /* otherwise the displacement is not P-relative, so fall into the data-relative handler */
+    /* otherwise the displacement is not P-relative, so fall through into the data-relative handler */
 
     /* DB+/Q+/Q-/S- displacements, indirect bit 5, index bit 4 */
 
@@ -3624,7 +3640,7 @@ switch (ops [op_index].operand) {                       /* dispatch by the opera
 
         indirect = (instruction & I_FLAG_BIT_5) != 0;       /* save the indirect condition */
 
-    /* fall into the index case */
+    /* fall through into the index case */
 
     /* index bit 4 */
 
@@ -3639,7 +3655,7 @@ switch (ops [op_index].operand) {                       /* dispatch by the opera
         index = (instruction & X_FLAG) != 0;            /* save the index condition */
         op_value = op_value & DISPL_63_MASK;            /*   and mask to the operand value */
 
-    /* fall into the unsigned value case */
+    /* fall through into the unsigned value case */
 
     /* unsigned value range 0-63 */
 
@@ -3686,7 +3702,7 @@ switch (ops [op_index].operand) {                       /* dispatch by the opera
     case opSU2:
         op_value = op_value >> EIS_SDEC_SHIFT;          /* align the S decrement value */
 
-    /* fall into the unsigned operand case */
+    /* fall through into the unsigned operand case */
 
     /* unsigned value range 0-1 */
     /* unsigned value range 0-255 */

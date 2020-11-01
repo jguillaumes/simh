@@ -23,7 +23,6 @@
    AI lab and Dynamic Modeling PDP-10s.
 */
 
-#include <time.h>
 #include "sim_defs.h"
 #include "sim_tmxr.h"
 #include "kx10_defs.h"
@@ -92,13 +91,12 @@ DEVICE tk10_dev = {
     TK10_NAME, tk10_unit, NULL, tk10_mod,
     1, 8, 0, 1, 8, 36,
     NULL, NULL, tk10_reset, NULL, tk10_attach, tk10_detach,
-    &tk10_dib, DEV_DISABLE | DEV_DIS | DEV_DEBUG, 0, dev_debug,
+    &tk10_dib, DEV_DISABLE | DEV_DIS | DEV_DEBUG | DEV_MUX, 0, dev_debug,
     NULL, NULL, tk10_help, NULL, NULL, tk10_description
 };
 
 static t_stat tk10_devio(uint32 dev, uint64 *data)
 {
-    DEVICE *dptr = &tk10_dev;
     TMLN *lp;
     int port;
     int ch;

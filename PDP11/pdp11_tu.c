@@ -30,7 +30,7 @@
    23-Oct-13    RMS     Revised for new boot setup routine
    18-Apr-11    MP      Fixed t_addr printouts for 64b big-endian systems
    17-May-07    RMS     CS1 DVA resides in device, not MBA
-   29-Apr-07    RMS     Fixed bug in setting FCE on TMK Naoki Hamada)
+   29-Apr-07    RMS     Fixed bug in setting FCE on TMK (Naoki Hamada)
    16-Feb-06    RMS     Added tape capacity checking
    12-Nov-05    RMS     Changed default formatter to TM03 (for VMS)
    31-Oct-05    RMS     Fixed address width for large files
@@ -521,7 +521,7 @@ switch (fnc) {                                          /* case on function */
             tu_set_er (ER_UNS);
             break;
             }
-        detach_unit (uptr);
+        sim_tape_detach (uptr);
         uptr->USTAT = FS_REW;
         sim_activate (uptr, tu_time);
         tucs1 = tucs1 & ~CS1_GO;

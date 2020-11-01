@@ -158,7 +158,6 @@
 #include "i7090_defs.h"
 #include "sim_timer.h"
 #include <math.h>
-#include <time.h>
 #ifdef CPANEL
 #include "cpanel.h"
 #endif
@@ -723,7 +722,7 @@ sim_instr(void)
     uint16              decr;
     uint16              xr;
     uint16              opinfo;
-    int                 fptemp, fptemp2;
+    int                 fptemp = 0, fptemp2;
     uint8               f;
     uint16              tbase;
     int                 xeccnt = 15;
@@ -4126,8 +4125,7 @@ prottrap:
 #endif
 
             default:
-                fprintf(stderr, "Invalid opcode %o IC=%o %012llo\n",
-                        opcode, IC, temp);
+                sim_printf("Invalid opcode %o IC=%o %012llo\n", opcode, IC, temp);
                 reason = STOP_UUO;
                 break;
             }
@@ -4199,8 +4197,7 @@ t_stat
 rtc_srv(UNIT * uptr)
 {
     if (cpu_unit.flags & OPTION_TIMER) {
-        int32 t;
-        t = sim_rtcn_calb (rtc_tps, TMR_RTC);
+        (void)sim_rtcn_calb (rtc_tps, TMR_RTC);
         sim_activate_after(uptr, 1000000/rtc_tps);
         M[5] += 1;
         if (M[5] & MSIGN)

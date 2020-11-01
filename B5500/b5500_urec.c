@@ -32,14 +32,15 @@
 #include "sim_console.h"
 
 #define UNIT_CDR        UNIT_ATTABLE | UNIT_RO | UNIT_DISABLE | MODE_029
-#define UNIT_CDP        UNIT_ATTABLE | UNIT_DISABLE | MODE_029
-#define UNIT_LPR        UNIT_ATTABLE | UNIT_DISABLE
+#define UNIT_CDP        UNIT_ATTABLE | UNIT_SEQ | UNIT_DISABLE | MODE_029
+#define UNIT_LPR        UNIT_ATTABLE | UNIT_SEQ | UNIT_DISABLE
 
 #define TMR_RTC         0
 
 #define LINENUM    u3
 #define POS        u4
 #define CMD        u5
+#define LPP        u6
 
 
 /* std devices. data structures
@@ -150,7 +151,7 @@ MTAB                cdr_mod[] = {
 };
 
 REG                 cdr_reg[] = {
-    {BRDATA(BUFF, cdr_buffer, 16, 16, sizeof(cdr_buffer)), REG_HRO},
+    {BRDATA(BUFF, cdr_buffer, 16, 16, sizeof(cdr_buffer)/sizeof(uint16)), REG_HRO},
     {0}
 };  
 
@@ -177,7 +178,7 @@ MTAB                cdp_mod[] = {
 };
 
 REG                 cdp_reg[] = {
-    {BRDATA(BUFF, cdp_buffer, 16, 16, sizeof(cdp_buffer)), REG_HRO},
+    {BRDATA(BUFF, cdp_buffer, 16, 16, sizeof(cdp_buffer)/sizeof(uint16)), REG_HRO},
     {0}
 };  
 
@@ -228,7 +229,7 @@ UNIT                con_unit[] = {
 };
 
 REG                 con_reg[] = {
-    {BRDATA(BUFF, con_data, 16, 8, sizeof(con_data)), REG_HRO},
+    {SAVEDATA(BUFF, con_data) },
     {0}
 };  
 
@@ -581,6 +582,7 @@ cdp_srv(UNIT *uptr) {
         } else {
             hol = 0;
             switch (ch & 077) {
+            case 000:  hol = 0x206; break;  /* ? */
             case 015:  hol = 0x082; break;  /* : */
             case 016:  hol = 0x20A; break;  /* > */
             case 017:  hol = 0x805; break;  /* } */
@@ -684,7 +686,7 @@ lpr_setlpp(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
     }
     if (i < 20 || i > 100)
         return SCPE_ARG;
-    uptr->capac = i;
+    uptr->LPP = i;
     uptr->LINENUM = 0;
     return SCPE_OK;
 }
@@ -694,7 +696,7 @@ lpr_getlpp(FILE *st, UNIT *uptr, int32 v, CONST void *desc)
 {
     if (uptr == NULL)
         return SCPE_IERR;
-    fprintf(st, "linesperpage=%d", uptr->capac);
+    fprintf(st, "linesperpage=%d", uptr->LPP);
     return SCPE_OK;
 }
 
@@ -708,7 +710,6 @@ print_line(UNIT * uptr, int unit)
 
     char                out[150];       /* Temp conversion buffer */
     int                 i;
-    int                 chan = uptr->CMD & URCSTA_CHMASK;
 
     if ((uptr->flags & (UNIT_ATT)) == 0)
         return; /* attached? */
@@ -752,7 +753,7 @@ print_line(UNIT * uptr, int unit)
     case 1:
     case 2:     /* Skip to top of form */
     case 12:
-        uptr->LINENUM = uptr->capac+1;
+        uptr->LINENUM = uptr->LPP+1;
         break;
 
     case 3:     /* Even lines */
@@ -774,13 +775,13 @@ print_line(UNIT * uptr, int unit)
         }
         break;
     case 5:     /* Half page */
-        while((uptr->LINENUM != (uptr->capac/2)) ||
-              (uptr->LINENUM != (uptr->capac))) {
+        while((uptr->LINENUM != (uptr->LPP/2)) ||
+              (uptr->LINENUM != (uptr->LPP))) {
             sim_fwrite("\r", 1, 1, uptr->fileref);
             sim_fwrite("\n", 1, 1, uptr->fileref);
             uptr->pos += 2;
             uptr->LINENUM++;
-            if (((uint32)uptr->LINENUM) > uptr->capac) {
+            if (uptr->LINENUM > uptr->LPP) {
                 uptr->LINENUM = 1;
                 break;
             }
@@ -788,15 +789,15 @@ print_line(UNIT * uptr, int unit)
         }
         break;
     case 6:     /* 1/4 Page */
-        while((uptr->LINENUM != (uptr->capac/4)) ||
-              (uptr->LINENUM != (uptr->capac/2)) ||
-              (uptr->LINENUM != (uptr->capac/2+uptr->capac/4)) ||
-              (uptr->LINENUM != (uptr->capac))) {
+        while((uptr->LINENUM != (uptr->LPP/4)) ||
+              (uptr->LINENUM != (uptr->LPP/2)) ||
+              (uptr->LINENUM != (uptr->LPP/2+uptr->LPP/4)) ||
+              (uptr->LINENUM != (uptr->LPP))) {
             sim_fwrite("\r", 1, 1, uptr->fileref);
             sim_fwrite("\n", 1, 1, uptr->fileref);
             uptr->pos += 2;
             uptr->LINENUM++;
-            if (((uint32)uptr->LINENUM) > uptr->capac) {
+            if (uptr->LINENUM > uptr->LPP) {
                 uptr->LINENUM = 1;
                 break;
             }
@@ -816,7 +817,7 @@ print_line(UNIT * uptr, int unit)
     }
 
 
-    if (((uint32)uptr->LINENUM) > uptr->capac) {
+    if (uptr->LINENUM > uptr->LPP) {
         uptr->LINENUM = 1;
         uptr->CMD |= URCSTA_EOF;
         sim_fwrite("\f", 1, 1, uptr->fileref);
@@ -904,6 +905,7 @@ lpr_attach(UNIT * uptr, CONST char *file)
     t_stat              r;
     int                 u = (uptr - lpr_unit);
 
+    sim_switches |= SWMASK ('A');   /* Position to EOF */
     if ((r = attach_unit(uptr, file)) != SCPE_OK)
         return r;
     if ((sim_switches & SIM_SW_REST) == 0) {

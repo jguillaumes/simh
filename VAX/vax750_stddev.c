@@ -60,7 +60,6 @@
 
 #include "vax_defs.h"
 #include "sim_tmxr.h"
-#include <time.h>
 
 #include "pdp11_td.h"
 
@@ -189,6 +188,7 @@ int32 td_regval;                                        /* temp location used in
 t_stat tti_svc (UNIT *uptr);
 t_stat tto_svc (UNIT *uptr);
 t_stat tmr_svc (UNIT *uptr);
+t_stat clk_svc (UNIT *uptr);
 t_stat tti_reset (DEVICE *dptr);
 t_stat tto_reset (DEVICE *dptr);
 t_stat clk_reset (DEVICE *dptr);
@@ -285,7 +285,7 @@ DEVICE tto_dev = {
 
 /* TODR and TMR data structures */
 
-UNIT clk_unit = { UDATA (NULL, UNIT_IDLE+UNIT_FIX, sizeof(TOY))};
+UNIT clk_unit = { UDATA (&clk_svc, UNIT_IDLE+UNIT_FIX, sizeof(TOY))};
 
 REG clk_reg[] = {
     { DRDATAD (TIME,                   clk_unit.wait,  24, "initial poll interval"), REG_NZ + PV_LEFT },
@@ -378,8 +378,6 @@ REG td_reg[] = {
     { DRDATAD (STIME,  td_regval,24, "seek, per block"), PV_LEFT },
     { DRDATAD (XTIME,  td_regval,24, "tr set time"), PV_LEFT },
     { DRDATAD (ITIME,  td_regval,24, "init time"), PV_LEFT },
-    { BRDATAD (IBUF,   &td_regval,16, 8, 512, "input buffer"), },
-    { BRDATAD (OBUF,   &td_regval,16, 8, 512, "output buffer"), },
     { NULL }
     };
 
@@ -658,11 +656,11 @@ if ((val & TMR_CSR_RUN) == 0) {                         /* clearing run? */
     if (tmr_iccs & TMR_CSR_RUN) {                       /* run 1 -> 0? */
         tmr_icr = icr_rd ();                            /* update icr */
         sim_debug (TMR_DB_REG, &tmr_dev, "iccs_wr() - stopped clock with remaining ICR=0x%08X\n", tmr_icr);
-        sim_rtcn_calb (0, TMR_CLK);                     /* stop timer */
         }
     sim_cancel (&tmr_unit);                             /* cancel timer */
     }
-if ((tmr_iccs & CSR_DONE) && (val & CSR_DONE))          /* Interrupt Acked? */
+if ((tmr_iccs & CSR_DONE) && (val & CSR_DONE) &&        /* Interrupt Acked? */
+    (10000 == (tmr_nicr ? (~tmr_nicr + 1) : 0xFFFFFFFF)))/* of 10ms tick */
     sim_rtcn_tick_ack (20, TMR_CLK);                    /* Let timers know */
 tmr_iccs = tmr_iccs & ~(val & TMR_CSR_W1C);             /* W1C csr */
 tmr_iccs = (tmr_iccs & ~TMR_CSR_WR) |                   /* new r/w */
@@ -672,10 +670,8 @@ if (val & TMR_CSR_XFR)                                  /* xfr set? */
 if (val & TMR_CSR_RUN)  {                               /* run? */
     if (val & TMR_CSR_XFR)                              /* new tir? */
         sim_cancel (&tmr_unit);                         /* stop prev */
-    if (!sim_is_active (&tmr_unit)) {                   /* not running? */
-        sim_rtcn_init_unit (&tmr_unit, CLK_DELAY, TMR_CLK);  /* init timer */
+    if (!sim_is_active (&tmr_unit))                     /* not running? */
         tmr_sched (tmr_icr);                            /* activate */
-        }
     }
 else {
     if (val & TMR_CSR_XFR)                              /* xfr set? */
@@ -759,11 +755,11 @@ void tmr_sched (uint32 nicr)
 {
 uint32 usecs = (nicr) ? (~nicr + 1) : 0xFFFFFFFF;
 
-clk_tps = (int32)((1000000.0 / usecs) + 0.5);
-
 sim_debug (TMR_DB_SCHED, &tmr_dev, "tmr_sched(nicr=0x%08X-usecs=0x%08X) - tps=%d\n", nicr, usecs, clk_tps);
-tmr_poll = sim_rtcn_calb (clk_tps, TMR_CLK);
-sim_activate_after (&tmr_unit, usecs);
+if (usecs == 10000)
+    sim_clock_coschedule_tmr (&tmr_unit, TMR_CLK, 1);
+else
+    sim_activate_after (&tmr_unit, usecs);
 }
 
 /* 100Hz TODR reset */
@@ -776,6 +772,16 @@ if (clk_unit.filebuf == NULL) {                         /* make sure the TODR is
         return SCPE_MEM;
     }
 todr_resync ();
+sim_activate_after (&clk_unit, 10000);
+tmr_poll = sim_rtcn_init_unit (&clk_unit, CLK_DELAY, TMR_CLK);  /* init timer */
+return SCPE_OK;
+}
+
+t_stat clk_svc (UNIT *uptr)
+{
+sim_activate_after (uptr, 10000);
+tmr_poll = sim_rtcn_calb (100, TMR_CLK);
+tmxr_poll = tmr_poll * TMXR_MULT;                       /* set mux poll */
 return SCPE_OK;
 }
 
@@ -875,8 +881,6 @@ return r;
 
 t_stat tmr_reset (DEVICE *dptr)
 {
-tmr_poll = sim_rtcn_init_unit (&tmr_unit, CLK_DELAY, TMR_CLK);  /* init timer */
-tmxr_poll = tmr_poll * TMXR_MULT;                       /* set mux poll */
 tmr_iccs = 0;
 tmr_nicr = 0;
 tmr_int = 0;
@@ -926,7 +930,7 @@ base.tv_sec = (time_t)toy->toy_gmtbase;
 base.tv_nsec = toy->toy_gmtbasemsec * 1000000;
 sim_timespec_diff (&val, &now, &base);                  /* val = now - base */
 sim_debug (TMR_DB_TODR, &clk_dev, "todr_rd() - TODR=0x%X - %s\n", (int32)(val.tv_sec*100 + val.tv_nsec/10000000), todr_fmt_vms_todr ((int32)(val.tv_sec*100 + val.tv_nsec/10000000)));
-return (int32)(val.tv_sec*100 + val.tv_nsec/10000000);  /* 100hz Clock Ticks */
+return (int32)(val.tv_sec*100 + (val.tv_nsec + 5000000)/10000000);  /* 100hz Clock rounded Ticks */
 }
 
 void todr_wr (int32 data)
@@ -944,7 +948,12 @@ val.tv_nsec = (((uint32)data) % 100) * 10000000;
 sim_timespec_diff (&base, &now, &val);                  /* base = now - data */
 toy->toy_gmtbase = (uint32)base.tv_sec;
 tbase = (time_t)base.tv_sec;
-toy->toy_gmtbasemsec = base.tv_nsec/1000000;
+toy->toy_gmtbasemsec = (base.tv_nsec + 500000)/1000000;
+if (clk_unit.flags & UNIT_ATT) {                        /* OS Agnostic mode? */
+    rewind (clk_unit.fileref);
+    fwrite (toy, sizeof (*toy), 1, clk_unit.fileref);   /* Save sync time info */
+    fflush (clk_unit.fileref);
+    }
 sim_debug (TMR_DB_TODR, &clk_dev, "todr_wr(0x%X) - %s - GMTBASE=%8.8s.%03d\n", data, todr_fmt_vms_todr (data), 11+ctime(&tbase), (int)(base.tv_nsec/1000000));
 }
 
@@ -974,7 +983,7 @@ else {                                                  /* Not-Attached means */
             ctm->tm_min) * 60) +
             ctm->tm_sec;
     todr_wr ((base * 100) + 0x10000000 +                /* use VMS form */
-             (int32)(now.tv_nsec / 10000000));
+             (int32)((now.tv_nsec + 5000000)/ 10000000));
     }
 return SCPE_OK;
 }

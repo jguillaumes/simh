@@ -569,7 +569,7 @@ struct SHMEM {
 
 t_stat sim_shmem_open (const char *name, size_t size, SHMEM **shmem, void **addr)
 {
-#ifdef HAVE_SHM_OPEN
+#if defined (HAVE_SHM_OPEN) && defined (__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4)
 *shmem = (SHMEM *)calloc (1, sizeof(**shmem));
 mode_t orig_mask;
 
@@ -626,26 +626,31 @@ if ((*shmem)->shm_base == MAP_FAILED) {
 *addr = (*shmem)->shm_base;
 return SCPE_OK;
 #else
+*shmem = NULL;
 return SCPE_NOFNC;
 #endif
 }
 
 void sim_shmem_close (SHMEM *shmem)
 {
+#if defined (HAVE_SHM_OPEN)
 if (shmem == NULL)
     return;
 if (shmem->shm_base != MAP_FAILED)
     munmap (shmem->shm_base, shmem->shm_size);
-if (shmem->shm_fd != -1)
+if (shmem->shm_fd != -1) {
+    shm_unlink (shmem->shm_name);
     close (shmem->shm_fd);
+    }
 free (shmem->shm_name);
 free (shmem);
+#endif
 }
 
 int32 sim_shmem_atomic_add (int32 *p, int32 v)
 {
-#if defined (HAVE_GCC_SYNC_BUILTINS)
-return __sync_add_and_fetch((int *) p, v);
+#if defined (__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4)
+return __sync_add_and_fetch ((int *) p, v);
 #else
 return *p + v;
 #endif
@@ -653,7 +658,7 @@ return *p + v;
 
 t_bool sim_shmem_atomic_cas (int32 *ptr, int32 oldv, int32 newv)
 {
-#if defined (HAVE_GCC_SYNC_BUILTINS)
+#if defined (__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4)
 return __sync_bool_compare_and_swap (ptr, oldv, newv);
 #else
 if (*ptr == oldv) {
@@ -809,7 +814,10 @@ while ((c = strstr (fullpath, "/../"))) {       /* process up directory climbing
         else
             break;
     }
-name = 1 + strrchr (fullpath, '/');
+if (!strrchr (fullpath, '/'))
+    name = fullpath + strlen (fullpath);
+else
+    name = 1 + strrchr (fullpath, '/');
 ext = strrchr (name, '.');
 if (ext == NULL)
     ext = name + strlen (name);
@@ -953,6 +961,7 @@ glob_t  paths;
 #else
 DIR *dir;
 #endif
+int found_count = 0;
 struct stat filestat;
 char *c;
 char DirName[PATH_MAX + 1], WholeName[PATH_MAX + 1], WildName[PATH_MAX + 1];
@@ -982,34 +991,37 @@ if (dir) {
     struct dirent *ent;
 #endif
     t_offset FileSize;
-    char FileName[PATH_MAX + 1];
-    const char *MatchName = 1 + strrchr (cptr, '/');
-    char *p_name;
-    struct tm *local;
+    char *FileName;
+     char *p_name;
 #if defined (HAVE_GLOB)
     size_t i;
 #endif
 
 #if defined (HAVE_GLOB)
     for (i=0; i<paths.gl_pathc; i++) {
+        FileName = (char *)malloc (1 + strlen (paths.gl_pathv[i]));
         sprintf (FileName, "%s", paths.gl_pathv[i]);
-#else
+#else /* !defined (HAVE_GLOB) */
     while ((ent = readdir (dir))) {
 #if defined (HAVE_FNMATCH)
         if (fnmatch(MatchName, ent->d_name, 0))
             continue;
-#else
-        /* only match exact name without fnmatch support */
-        if (strcmp(MatchName, ent->d_name) != 0)
+#else /* !defined (HAVE_FNMATCH) */
+        /* only match all names or exact name without fnmatch support */
+        if ((strcmp(MatchName, "*") != 0) &&
+            (strcmp(MatchName, ent->d_name) != 0))
             continue;
-#endif
+#endif /* defined (HAVE_FNMATCH) */
+        FileName = (char *)malloc (1 + strlen (DirName) + strlen (ent->d_name));
         sprintf (FileName, "%s%s", DirName, ent->d_name);
-#endif
+#endif /* defined (HAVE_GLOB) */
         p_name = FileName + strlen (DirName);
         memset (&filestat, 0, sizeof (filestat));
         (void)stat (FileName, &filestat);
         FileSize = (t_offset)((filestat.st_mode & S_IFDIR) ? 0 : sim_fsize_name_ex (FileName));
         entry (DirName, p_name, FileSize, &filestat, context);
+        free (FileName);
+        ++found_count;
         }
 #if defined (HAVE_GLOB)
     globfree (&paths);
@@ -1019,6 +1031,9 @@ if (dir) {
     }
 else
     return SCPE_ARG;
-return SCPE_OK;
+if (found_count)
+    return SCPE_OK;
+else
+    return SCPE_ARG;
 }
 #endif /* !defined(_WIN32) */

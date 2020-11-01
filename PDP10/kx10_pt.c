@@ -1,6 +1,6 @@
-/* ka10_pt.c: PDP-10 reader/punch simulator
+/* kx10_pt.c: PDP-10 paper tape reader/punch simulator
 
-   Copyright (c) 2011-2017, Richard Cornwell
+   Copyright (c) 2011-2020, Richard Cornwell
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -73,7 +73,7 @@ const char    *ptr_description (DEVICE *dptr);
 DIB ptp_dib = { PP_DEVNUM, 1, &ptp_devio, NULL };
 
 UNIT ptp_unit = {
-    UDATA (&ptp_svc, UNIT_ATTABLE+UNIT_TEXT, 0), 10000
+    UDATA (&ptp_svc, UNIT_ATTABLE+UNIT_TEXT+UNIT_SEQ, 0), 10000
     };
 
 REG ptp_reg[] = {
@@ -209,6 +209,7 @@ t_stat ptp_attach (UNIT *uptr, CONST char *cptr)
 {
     t_stat reason;
 
+    sim_switches |= SWMASK ('A');   /* Position to EOF */
     reason = attach_unit (uptr, cptr);
     uptr->STATUS &= ~NO_TAPE_PP;
     return reason;
@@ -409,6 +410,7 @@ fprintf (st, "Paper Tape Punch (PTP)\n\n");
 fprintf (st, "The paper tape punch (PTP) writes data to a disk file.  The POS register\n");
 fprintf (st, "specifies the number of the next data item to be written.  Thus, by changing\n");
 fprintf (st, "POS, the user can backspace or advance the punch.\n");
+fprintf (st, "A new file can be created if you attach with the -N switch\n\n");
 fprint_set_help (st, dptr);
 fprint_show_help (st, dptr);
 fprint_reg_help (st, dptr);

@@ -34,7 +34,7 @@
 #include "sim_defs.h"
 #ifdef NUM_DEVS_CDP
 
-#define UNIT_CDP        UNIT_ATTABLE | UNIT_DISABLE | MODE_026
+#define UNIT_CDP        UNIT_ATTABLE | UNIT_DISABLE | UNIT_SEQ | MODE_026
 
 
 /* Flags for punch and reader. */
@@ -281,6 +281,7 @@ cdp_attach(UNIT * uptr, CONST char *file)
 {
     t_stat        r;
 
+    sim_switches |= SWMASK ('A');   /* Position to EOF */
     if ((r = sim_card_attach(uptr, file)) != SCPE_OK)
         return r;
     if (uptr->up7 == 0) {

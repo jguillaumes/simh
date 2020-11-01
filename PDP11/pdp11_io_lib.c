@@ -68,7 +68,21 @@ t_stat set_autocon (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 if (cptr != NULL)
     return SCPE_ARG;
+if (autcon_enb == val)
+    return SCPE_OK;
 autcon_enb = val;
+if (autcon_enb == 0) {
+    sim_messagef (SCPE_OK, "Device auto configuration is now disabled.\n");
+    sim_messagef (SCPE_OK, "Explicitly setting any address or vector value tells the system\n");
+    sim_messagef (SCPE_OK, "that you are planning a specific configuration that may not use\n");
+    sim_messagef (SCPE_OK, "use standard values.  You must explicitly specify bus address and\n");
+    sim_messagef (SCPE_OK, "vector values for any device you enable or otherwise add to the\n");
+    sim_messagef (SCPE_OK, "system configuration after this message is issued.  Changing the\n");
+    sim_messagef (SCPE_OK, "number of lines on a terminal multiplexer is such a change.\n");
+    sim_messagef (SCPE_OK, "To avoid complexities dealing with this, it is recommended that\n");
+    sim_messagef (SCPE_OK, "you configure all devices which can use standard addresses before\n");
+    sim_messagef (SCPE_OK, "changing the address or vector for an unusual device situation.\n");
+    }
 return auto_config (NULL, 0);
 }
 
@@ -107,7 +121,7 @@ if ((newba <= IOPAGEBASE) ||                            /* > IO page base? */
     (newba % ((uint32) val)))                           /* check modulus */
     return SCPE_ARG;
 dibp->ba = newba;                                       /* store */
-autcon_enb = 0;                                         /* autoconfig off */
+set_autocon (NULL, 0, NULL, NULL);                      /* autoconfig off */
 return SCPE_OK;
 }
 
@@ -201,7 +215,7 @@ if ((r != SCPE_OK) ||
     (newvec & ((dibp->vnum > 1)? 07: 03)))              /* properly aligned value? */
     return SCPE_ARG;
 dibp->vec = newvec;
-autcon_enb = 0;                                         /* autoconfig off */
+set_autocon (NULL, 0, NULL, NULL);                      /* autoconfig off */
 return SCPE_OK;
 }
 
@@ -558,6 +572,67 @@ for (i = 0, dibp = NULL; i < (IOPAGESIZE >> 1); i++) {  /* loop thru entries */
 return SCPE_OK;
 }
 
+static t_bool _map_description (char *buf, size_t buf_size, uint32 val, uint32 index, uint32 valid_mask)
+{
+t_bool ind_eq = (index == (val & ~valid_mask));
+const char *desc = ind_eq ? "Value == Index" : "";
+const char *valid = (val & valid_mask) ? "Valid" : "";
+
+*buf = '\0';
+if (*desc || *valid)
+    snprintf (buf, buf_size, " (%s%s%s)", valid, (*valid && *desc) ? ", " : "", desc);
+return ind_eq;
+}
+
+/* Display bus map registers */
+
+t_stat show_bus_map (FILE *st, const char *cptr, uint32 *busmap, uint32 nmapregs, const char *busname, uint32 mapvalid)
+{
+t_stat r;
+uint32 mr;
+uint32 mstart = 0;
+uint32 mend = nmapregs - 1;
+uint32 same_val;
+uint32 same_start;
+t_bool ind_eq;
+char same_desc[32];
+char desc[32];
+
+if (cptr) {
+    mstart = mend = (uint32) get_uint (cptr, 16, nmapregs - 1, &r);
+    if (r != SCPE_OK)
+        return sim_messagef (SCPE_ARG, "Invalid %s Map Register: %s\n", busname, cptr);
+    }
+_map_description (desc, sizeof (desc), busmap[mstart], mstart, mapvalid);
+fprintf (st, "%s-MAP[%04X] = %08X%s\n", busname, mstart, busmap[mstart], desc);
+same_start = mstart;
+same_val = busmap[mstart];
+strcpy (same_desc, desc);
+for (mr = mstart + 1; mr <= mend; mr++) {
+    ind_eq = _map_description (desc, sizeof (desc), busmap[mr], mr, mapvalid);
+    if (((same_val == busmap[mr]) && (0 == strcmp (desc, same_desc))) ||
+        (ind_eq && (0 == strcmp (desc, same_desc)))) {
+        same_val = busmap[mr];
+        strcpy (same_desc, desc);
+        continue;
+        }
+    if (same_start != mr - 1) {
+        if (same_start + 1 == mr - 1)
+            fprintf (st, "%s-MAP[%04X] same as above\n", busname, same_start + 1);
+        else
+            fprintf (st, "%s-MAP[%04X thru %04X] same as above\n", busname, same_start + 1, mr - 1);
+        }
+    fprintf (st, "%s-MAP[%04X] = %08X%s\n", busname, mr, busmap[mr], desc);
+    same_start = mr;
+    same_val = busmap[mr];
+    strcpy (same_desc, desc);
+    }
+if ((same_start != mend) ||
+    (0 != strcmp (same_desc, desc)))
+    fprintf (st, "%s-MAP[%04X thru %04X] same as above\n", busname, same_start + 1, mend);
+return SCPE_OK;
+}
+
 /* Autoconfiguration
 
    The table reflects the MicroVAX 3900 microcode, with one field 
@@ -804,11 +879,9 @@ AUTO_CON auto_tab[] = {/*c  #v  am vm  fxa   fxv */
 
 static void build_vector_tab (void)
 {
-int32 ilvl, ibit;
 static t_bool done = FALSE;
 AUTO_CON *autp;
 DEVICE *dptr;
-DIB *dibp;
 uint32 j, k;
 
 if (done)
@@ -820,10 +893,13 @@ for (j = 0; (dptr = sim_devices[j]) != NULL; j++) {
     for (autp = auto_tab; autp->valid >= 0; autp++) {
         for (k=0; autp->dnam[k]; k++) {
             if (!strcmp(dptr->name, autp->dnam[k])) {
+#if (VEC_SET != 0)
+                int32 ilvl, ibit;
+                DIB *dibp;
+
                 dibp = (DIB *)dptr->ctxt;
                 ilvl = dibp->vloc / 32;
                 ibit = dibp->vloc % 32;
-#if (VEC_SET != 0)
                 if (1) {
                     int v;
                     
@@ -843,7 +919,7 @@ t_stat auto_config (const char *name, int32 nctrl)
 {
 uint32 csr = IOPAGEBASE + AUTO_CSRBASE;
 uint32 vec = AUTO_VECBASE;
-int32 ilvl, ibit, numc;
+int32 numc;
 AUTO_CON *autp;
 DEVICE *dptr;
 DIB *dibp;
@@ -887,8 +963,6 @@ for (autp = auto_tab; autp->valid >= 0; autp++) {       /* loop thru table */
         if (dibp == NULL)                               /* not there??? */
             return SCPE_IERR;
         numc = dibp->numc ? dibp->numc : 1;
-        ilvl = dibp->vloc / 32;
-        ibit = dibp->vloc % 32;
         /* Identify how many devices earlier in the device list are 
            enabled and use that info to determine fixed address assignments */
         for (k=jena=0; k<j; k++) {

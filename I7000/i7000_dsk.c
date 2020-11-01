@@ -297,14 +297,12 @@ DEVICE              dsk_dev = {
 
 uint32 dsk_cmd(UNIT * uptr, uint16 cmd, uint16 dev)
 {
-    int                chan;
     int                 u = (uptr->u3 >> 8) & 0xf;
-    UNIT               *base = &dsk_unit[u];
+    int                chan = UNIT_G_CHAN(dsk_unit[u].flags);
+#ifdef I7010
     int                 sel;
 
-    chan = UNIT_G_CHAN(dsk_unit[u].flags);
-    sel = (base->flags & UNIT_SELECT) ? 1 : 0;
-#ifdef I7010
+    sel = (dsk_unit[u].flags & UNIT_SELECT) ? 1 : 0;
     if (cmd & 0x100)
         sense[(chan * 2) + sel] |= STAT_SIXBIT;
     else
@@ -1391,8 +1389,8 @@ disk_write(UNIT * uptr, uint8 data, int chan, int eor)
     data &= (sense[schan] & STAT_SIXBIT)?077:0277;
     if (uptr->u5 & DSKSTA_CHECK) {
         if (dbuffer[u][uptr->u6++] != data) {
-        fprintf(stderr, "Mismatch %d %03o != %03o\n\r",
-                uptr->u6-1, dbuffer[u][uptr->u6-1], data);
+            sim_printf("Mismatch %d %03o != %03o\n\r",
+                   uptr->u6-1, dbuffer[u][uptr->u6-1], data);
             disk_posterr(uptr, DATA_CHECK);
         }
     } else {

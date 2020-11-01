@@ -23,7 +23,6 @@
 */
 
 #include "i7000_defs.h"
-#include <time.h>
 
 #ifdef NUM_DEVS_CHRON
 #define BUFFSIZE        (12)
@@ -155,7 +154,7 @@ chron_read_buff(UNIT * uptr, int cmd)
 
     uptr->u6 = 0;               /* Set to no data */
 
-    curtim = time(NULL);        /* get time */
+    curtim = sim_get_time(NULL);/* get time */
     tptr = localtime(&curtim);  /* decompose */
     if (tptr == NULL)
         return;                 /* error? */

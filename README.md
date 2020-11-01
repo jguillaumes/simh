@@ -39,8 +39,8 @@
 . . . . . . . . . . [Linux - Dependencies](#linux---dependencies)  
 . . . . . . [Windows](#windows)  
 . . . . . . . . [Required related files](#required-related-files)  
-. . . . . . . . [Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015](#visual-studio-standard-or-express-2008-2010-2012-2013-or-visual-studio-community-2015)  
-. . . . . . . . [MinGW](#mingw)  
+. . . . . . . . [Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015, 2017, 2019](#visual-studio-standard-or-express-2008-2010-2012-2013-or-visual-studio-community-2015-2017-2019)  
+. . . . . . . . [MinGW32](#mingw32)  
 . . . . . . [VMS](#vms)  
 . . [Problem Reports](#problem-reports)  
 
@@ -82,7 +82,7 @@
 
 #### Richard Cornwell has implemented the IBM 701, IBM 704, IBM 7010/1410, IBM 7070/7074, IBM 7080/702/705/7053 and IBM 7090/7094/709/704 simulators.
 
-#### Richard Cornwell has implemented the PDP6, PDP10-KA, and PDP10-KI simulators.
+#### Richard Cornwell has implemented the PDP6, PDP10-KA, PDP10-KI and PDP10-KL simulators.
 
 #### Dave Bryan has implemented an HP-3000 Series III simulator.
 
@@ -99,6 +99,8 @@
 #### CDC 1700 simulator from John Forecast
 
 #### Hans-Åke Lund has implemented an SCELBI (SCientic-ELectronics-BIology) simulator.
+
+#### IBM 650 simulator from Roberto Sancho Villa
 
 ### New Host Platform support - HP-UX and AIX
 
@@ -229,7 +231,7 @@ Host platforms which have libSDL2 available can leverage this functionality.
     RAW Disk Access (including CDROM)
     Virtual Disk Container files, including differencing disks
     File System type detection to accurately autosize disks.
-    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, Ultrix Partitions
+    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, DEC RSX11, Ultrix Partitions
 
 #### Tape Extensions
     AWS format tape support
@@ -304,6 +306,9 @@ The following extensions to the SCP command language without affecting prior beh
                                  Restores the default CTRL+C behavior for the
                                  currently running command procedure.
 
+    DO <stdin>
+                                 Invokes a nested DO command with input from the 
+                                 running console.
 
 Error traps can be taken for any command which returns a status other than SCPE_STEP, SCPE_OK, and SCPE_EXIT.   
 
@@ -405,6 +410,9 @@ Device simulator authors can easily schedule their device polling activities to 
     RUN UNTIL "output-string" ...    Establish the specified "output-string" as an EXPECT and run until it is encountered.
     GO UNTIL breakpoint              Establish the breakpoint specified and go until it is encountered
     GO UNTIL "output-string" ...     Establish the specified "output-string" as an EXPECT and go until it is encountered.
+    RUNLIMIT						 Bound simulator execution time
+    TAR                              Manipulate file archives
+    CURL                             Access URLs from the web
 
 #### Command Processing Enhancements
 
@@ -540,6 +548,7 @@ Different Linux distributions have different package management systems:
 Ubuntu:
 
     # apt-get install libpcap-dev
+    # apt-get install libpcre3-dev
     # apt-get install vde2
     # apt-get install libsdl2
     # apt-get install libsdl2_ttf
@@ -551,13 +560,13 @@ Compiling on windows is supported with recent versions of Microsoft Visual Studi
 ##### Required related files
 The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt
 
-##### Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015
+##### Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015, 2017, 2019
 
 The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using Visual Studio.
 
-##### MinGW
+##### MinGW32
 
-The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using MinGW.
+The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using MinGW32.
 
 #### VMS
 

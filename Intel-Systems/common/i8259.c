@@ -35,6 +35,8 @@
 
 #include "system_defs.h"                /* system header in system dir */
 
+#if defined (I8259_NUM) && (I8259_NUM > 0)
+
 /* function prototypes */
 
 t_stat i8259_cfg(uint8 base, uint8 devnum);
@@ -138,10 +140,10 @@ DEVICE i8259_dev = {
 
 t_stat i8259_cfg(uint8 base, uint8 devnum)
 {
-    reg_dev(i8259a, base, devnum); 
-    reg_dev(i8259b, base + 1, devnum); 
     sim_printf("    i8259[%d]: at base port 0%02XH\n",
         devnum, base & 0xFF);
+    reg_dev(i8259a, base, devnum); 
+    reg_dev(i8259b, base + 1, devnum); 
     return SCPE_OK;
 }
 
@@ -243,5 +245,7 @@ void i8259_dump(uint8 devnum)
     sim_printf(" OCW2=%02X", i8259_ocw2[devnum]);
     sim_printf(" OCW3=%02X\n", i8259_ocw3[devnum]);
 }
+
+#endif /* I8259_NUM > 0 */
 
 /* end of i8259.c */

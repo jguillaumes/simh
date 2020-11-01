@@ -39,7 +39,7 @@
 */
 struct ROM_File_Descriptor {
     const char *BinaryName;             const char *IncludeFileName; size_t expected_size; unsigned int checksum;  const char *ArrayName;            const char *Comments;} ROMs[] = {
-   {"VAX/ka655x.bin",                   "VAX/vax_ka655x_bin.h",                    131072,            0xFF7672D5,        "vax_ka655x_bin"},
+   {"VAX/ka655x.bin",                   "VAX/vax_ka655x_bin.h",                    131072,            0xFF7673B6,        "vax_ka655x_bin"},
    {"VAX/ka620.bin",                    "VAX/vax_ka620_bin.h",                      65536,            0xFF7F930F,        "vax_ka620_bin"},
    {"VAX/ka630.bin",                    "VAX/vax_ka630_bin.h",                      65536,            0xFF7F73EF,        "vax_ka630_bin"},
    {"VAX/ka610.bin",                    "VAX/vax_ka610_bin.h",                      16384,            0xFFEF3312,        "vax_ka610_bin"},
@@ -71,6 +71,7 @@ struct ROM_File_Descriptor {
    {"PDP11/11logo/11logo.lda",          "PDP11/pdp11_11logo_rom.h",                 26009,            0xFFDD77F7,        "logo_lda"},
    {"swtp6800/swtp6800/swtbug.bin",     "swtp6800/swtp6800/swtp_swtbug_bin.h",       1024,            0xFFFE4FBC,        "swtp_swtbug_bin"},
    {"3B2/rom_400.bin",                  "3B2/rom_400_bin.h",                        32768,            0xFFD55762,        "rom_400_bin"},
+   {"3B2/rom_1000.bin",                 "3B2/rom_1000_bin.h",                      131072,            0xFFDC0EB8,        "rom_1000_bin"},
    };
 
 
@@ -172,7 +173,7 @@ unsigned int checksum = 0;
 char *c;
 int i;
 char cleaned_rom_filename[512];
-char include_filename[512];
+char *include_filename;
 char array_name[512];
 
 if (NULL == (rFile = fopen (rom_filename, "rb"))) {
@@ -207,15 +208,16 @@ if ((c = strchr (array_name, '.')))
     *c = '_';
 if ((c = strchr (array_name, '/')))
     *c = '_';
-include_filename[sizeof (include_filename) - 1] = '\0';
-snprintf (include_filename, sizeof (include_filename) - 1, "%s.h", cleaned_rom_filename);
+include_filename = (char *)calloc (3 + strlen (cleaned_rom_filename), sizeof (*include_filename));
+sprintf (include_filename, "%s.h", cleaned_rom_filename);
 if ((c = strrchr (include_filename, '/')))
     sprintf (c+1, "%s.h", array_name);
 else
-    snprintf (include_filename, sizeof (include_filename) - 1, "%s.h", array_name);
+    sprintf (include_filename, "%s.h", array_name);
 printf ("The ROMs array entry for this new ROM image file should look something like:\n");
 printf ("{\"%s\",    \"%s\",     %d,  0x%08X, \"%s\"}\n",
         rom_filename, include_filename, (int)(statb.st_size), checksum, array_name);
+free (include_filename);
 free (ROMData);
 return 1;
 }

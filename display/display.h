@@ -42,11 +42,13 @@ enum display_type {
      * of the PDP-1, and thus all DEC machines.
      */
     DIS_TX0 = 0,
+    DIS_IMLAC = 1,
     DIS_VR14 = 14,
     DIS_VR17 = 17,
     DIS_VR20 = 20,
     DIS_TYPE30 = 30,
     DIS_VR48 = 48,
+    DIS_III = 111,
     DIS_TYPE340 = 340,
     DIS_NG = 999,
 };
@@ -64,6 +66,11 @@ enum display_type {
  * (but called implicitly by display_point())
  */
 extern int display_init(enum display_type, int scale, void *dptr);
+
+/*
+ * close display
+ */
+extern void display_close(void *dptr);
 
 /* return size of virtual display */
 extern int display_xpoints(void);

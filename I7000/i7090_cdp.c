@@ -26,7 +26,7 @@
 #include "i7090_defs.h"
 #include "sim_card.h"
 #ifdef NUM_DEVS_CDP
-#define UNIT_CDP        UNIT_ATTABLE | UNIT_DISABLE
+#define UNIT_CDP        UNIT_ATTABLE | UNIT_DISABLE | UNIT_SEQ
 
 
 /* std devices. data structures
@@ -255,6 +255,7 @@ cdp_attach(UNIT * uptr, CONST char *file)
 {
     t_stat              r;
 
+    sim_switches |= SWMASK ('A');   /* Position to EOF */
     if ((r = sim_card_attach(uptr, file)) != SCPE_OK)
         return r;
     if (uptr->up7 == 0) {

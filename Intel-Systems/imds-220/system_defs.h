@@ -30,8 +30,9 @@
 #include <ctype.h>
 #include "sim_defs.h"                   /* simulator defns */
 
-#define IPC     0
 #define SET_XACK(VAL)   (xack = VAL)
+
+#define I3214_NUM       0
 
 /* set the base for the DBB ports */
 #define DBB_BASE        0xC0
@@ -81,8 +82,8 @@
 
 /* set the base I/O address for the iSBC 206 */
 #define SBC206_BASE     0x68
-#define SBC206_INT      INT_1
-#define SBC206_NUM      0
+#define SBC206_INT      INT_2
+#define SBC206_NUM      1
 
 /* set the base I/O address for the iSBC 208 */
 #define SBC208_BASE     0x40

@@ -23,7 +23,6 @@
    specific to the MIT AI lab PDP-10.
 */
 
-#include <time.h>
 #include "kx10_defs.h"
 
 #ifdef USE_DISPLAY
@@ -359,8 +358,6 @@ static t_stat stk_svc (UNIT *uptr)
 
 t_stat stk_devio(uint32 dev, uint64 *data)
 {
-    DEVICE *dptr = &stk_dev;
-
     switch(dev & 07) {
     case CONO:
         status &= ~STK_PIA;
@@ -387,7 +384,8 @@ t_stat stk_devio(uint32 dev, uint64 *data)
 
 static t_stat stk_reset (DEVICE *dptr)
 {
-    vid_display_kb_event_process = stk_keyboard;
+    if ((stk_dev.flags & DEV_DIS) == 0)
+        vid_display_kb_event_process = stk_keyboard;
     return SCPE_OK;
 }
 

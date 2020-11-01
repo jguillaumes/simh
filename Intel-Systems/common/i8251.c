@@ -111,6 +111,8 @@
 
 #include "system_defs.h"
 
+#if defined (I8251_NUM) && (I8251_NUM > 0)
+
 #define UNIT_V_ANSI (UNIT_V_UF + 0)     /* ANSI mode */
 #define UNIT_ANSI   (1 << UNIT_V_ANSI)
 
@@ -180,8 +182,8 @@ DEBTAB i8251_debug[] = {
 };
 
 MTAB i8251_mod[] = {
-    { UNIT_ANSI, 0, "TTY", "TTY", NULL },
-    { UNIT_ANSI, UNIT_ANSI, "ANSI", "ANSI", NULL },
+    { UNIT_ANSI, 0, "ANSI", "ANSI", NULL },
+    { UNIT_ANSI, UNIT_ANSI, "TTY", "TTY", NULL },
     { 0 }
 };
 
@@ -205,11 +207,15 @@ DEVICE i8251_dev = {
     NULL,               //attach
     NULL,               //detach
     NULL,               //ctxt
-    0,                  //flags
+    DEV_DISABLE,        //flags
     0,                  //dctrl
     i8251_debug,        //debflags
-    NULL,               //msize
-    NULL                //lname
+    NULL,               //memeory size change
+    NULL,               //lname
+    NULL,               //help routine
+    NULL,               //attach help routine
+    NULL,               //help context
+    NULL                //device description
 };
 
 // i8251 configuration
@@ -233,13 +239,11 @@ t_stat i8251_svc (UNIT *uptr)
 
     sim_activate (uptr, uptr->wait); /* continue poll */
     if ((temp = sim_poll_kbd ()) < SCPE_KFLAG)
-        return temp;                    /* no char or error? */
-    uptr->buf = temp & 0xFF;       /* Save char */
+        return temp;               /* no char or error? */
+    uptr->buf = temp & 0x7F;       /* Save char */
+    if (uptr->flags & UNIT_ANSI)
+        uptr->buf = toupper(uptr->buf);
     uptr->u3 |= RXR;               /* Set status */
-
-    /* Do any special character handling here */
-
-    uptr->pos++;
     return SCPE_OK;
 }
 
@@ -297,5 +301,7 @@ uint8 i8251d(t_bool io, uint8 data, uint8 devnum)
     }
     return 0;
 }
+
+#endif /* I8251_NUM > 0 */
 
 /* end of i8251.c */

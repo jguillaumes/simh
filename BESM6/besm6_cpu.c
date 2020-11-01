@@ -53,7 +53,6 @@
 #include "besm6_defs.h"
 #include <math.h>
 #include <float.h>
-#include <time.h>
 
 
 t_value memory [MEMSIZE];
@@ -284,7 +283,7 @@ DEVICE *sim_devices[] = {
     0
 };
 
-const char *sim_stop_messages[] = {
+const char *sim_stop_messages[SCPE_BASE] = {
     "Неизвестная ошибка",                 /* Unknown error */
     "Останов",                            /* STOP */
     "Точка останова",                     /* Emulator breakpoint */
@@ -819,7 +818,7 @@ void check_initial_setup ()
         /* Яч. ГОД обновляем самостоятельно */
         time_t t;
         t_value date;
-        time(&t);
+        sim_get_time(&t);
         d = localtime(&t);
         ++d->tm_mon;
         date = (t_value) (d->tm_mday / 10) << 33 |

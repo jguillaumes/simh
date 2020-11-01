@@ -30,7 +30,6 @@
 
 */
 
-#include <time.h>
 #include "kx10_defs.h"
 
 #ifndef NUM_DEVS_PD
@@ -46,8 +45,6 @@
 
 #define PIA_FLG         07
 #define CLK_IRQ         010
-
-#define TMR_PD          3
 
 int pd_tps =            60;
 
@@ -79,7 +76,7 @@ DEVICE              pd_dev = {
 
 static uint64 pd_ticks (void)
 {
-    time_t t = time(NULL);
+    time_t t = sim_get_time(NULL);
     struct tm *x = localtime(&t);
     uint64 seconds;
     seconds = 86400ULL * x->tm_yday;
@@ -126,9 +123,6 @@ t_stat pd_devio(uint32 dev, uint64 *data)
 t_stat
 pd_srv(UNIT * uptr)
 {
-    int32 t;
-
-    t = sim_rtcn_calb (pd_tps, TMR_PD);
     sim_activate_after(uptr, 1000000/pd_tps);
     if (uptr->PIA_CH & PIA_FLG) {
         uptr->PIA_CH |= CLK_IRQ;
@@ -138,7 +132,6 @@ pd_srv(UNIT * uptr)
 
     return SCPE_OK;
 }
-
 
 const char *pd_description (DEVICE *dptr)
 {

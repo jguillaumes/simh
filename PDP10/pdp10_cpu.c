@@ -969,9 +969,9 @@ case 0127:  RD; AC(ac) = fltr (mb); break;              /* FLTR */
 /* case 0130:   MUUO                                  *//* UFA */
 /* case 0131:   MUUO                                  *//* DFN */
 case 0132:  AC(ac) = fsc (AC(ac), ea); break;           /* FSC */
-case 0133:  if (!ac)                                    /* IBP */
-                ibp (ea, pflgs);
-            else adjbp (ac, ea, pflgs); break;
+case 0133:  if (!ac) ibp (ea, pflgs);                   /* IBP */
+            else adjbp (ac, ea, pflgs); 
+            break;
 case 0134:  CIBP; LDB; CLRF (F_FPD); break;             /* ILBP */
 case 0135:  LDB; break;                                 /* LDB */
 case 0136:  CIBP; DPB; CLRF (F_FPD); break;             /* IDBP */
@@ -2380,6 +2380,7 @@ if (M == NULL)
 sim_vm_pc_value = &pdp10_pc_value;
 sim_vm_is_subroutine_call = &cpu_is_pc_a_subroutine_call;
 sim_clock_precalibrate_commands = pdp10_clock_precalibrate_commands;
+sim_vm_initial_ips = 2 * SIM_INITIAL_IPS;
 pcq_r = find_reg ("PCQ", NULL, dptr);
 if (pcq_r)
     pcq_r->qptr = 0;

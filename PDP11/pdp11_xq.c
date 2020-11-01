@@ -400,9 +400,9 @@ REG xqa_reg[] = {
   { GRDATA ( SETUP_L2, xqa.setup.l2, XQ_RDX, 32, 0), REG_HRO},
   { GRDATA ( SETUP_L3, xqa.setup.l3, XQ_RDX, 32, 0), REG_HRO},
   { GRDATA ( SETUP_SAN, xqa.setup.sanity_timer, XQ_RDX, 32, 0), REG_HRO},
-  { BRDATA ( SETUP_MACS, &xqa.setup.macs, XQ_RDX, 8, sizeof(xqa.setup.macs)), REG_HRO},
-  { BRDATA ( STATS, &xqa.stats, XQ_RDX, 8, sizeof(xqa.stats)), REG_HRO},
-  { BRDATA ( TURBO_INIT, &xqa.init, XQ_RDX, 8, sizeof(xqa.init)), REG_HRO},
+  { SAVEDATA ( SETUP_MACS, xqa.setup.macs) },
+  { SAVEDATA ( STATS, xqa.stats) },
+  { SAVEDATA ( TURBO_INIT, xqa.init) },
   { GRDATADF ( SRR,  xqa.srr,  XQ_RDX, 16, 0, "Status and Response Register", xq_srr_bits), REG_FIT },
   { GRDATAD ( SRQR,  xqa.srqr,  XQ_RDX, 16, 0, "Synchronous Request Register"), REG_FIT },
   { GRDATAD ( IBA,  xqa.iba,  XQ_RDX, 32, 0, "Init Block Address Register"), REG_FIT },
@@ -464,9 +464,9 @@ REG xqb_reg[] = {
   { GRDATA ( SETUP_L2, xqb.setup.l2, XQ_RDX, 32, 0), REG_HRO},
   { GRDATA ( SETUP_L3, xqb.setup.l3, XQ_RDX, 32, 0), REG_HRO},
   { GRDATA ( SETUP_SAN, xqb.setup.sanity_timer, XQ_RDX, 32, 0), REG_HRO},
-  { BRDATA ( SETUP_MACS, &xqb.setup.macs, XQ_RDX, 8, sizeof(xqb.setup.macs)), REG_HRO},
-  { BRDATA ( STATS, &xqb.stats, XQ_RDX, 8, sizeof(xqb.stats)), REG_HRO},
-  { BRDATA ( TURBO_INIT, &xqb.init, XQ_RDX, 8, sizeof(xqb.init)), REG_HRO},
+  { SAVEDATA ( SETUP_MACS, xqb.setup.macs) },
+  { SAVEDATA ( STATS, xqb.stats) },
+  { SAVEDATA ( TURBO_INIT, xqb.init) },
   { GRDATADF ( SRR,  xqb.srr,  XQ_RDX, 16, 0, "Status and Response Register", xq_srr_bits), REG_FIT },
   { GRDATAD ( SRQR,  xqb.srqr,  XQ_RDX, 16, 0, "Synchronous Request Register"), REG_FIT },
   { GRDATAD ( IBA,  xqb.iba,  XQ_RDX, 32, 0, "Init Block Address Register"), REG_FIT },
@@ -1313,7 +1313,7 @@ t_stat xq_process_mop(CTLR* xq)
     return SCPE_NOFNC;
 
   while ((meb->type != 0) && (meb < limit)) {
-    address = (meb->add_hi << 16) || (meb->add_mi << 8) || meb->add_lo;
+    address = (meb->add_hi << 16) | (meb->add_mi << 8) | meb->add_lo;
 
     /* MOP stuff here - NOT YET FULLY IMPLEMENTED */
     sim_debug (DBG_WRN, xq->dev, "Processing MEB type: %d\n", meb->type);
@@ -3147,7 +3147,6 @@ t_stat xq_boot (int32 unitno, DEVICE *dptr)
 {
 #ifdef VM_PDP11
 size_t i;
-DIB *dib = (DIB *)dptr->ctxt;
 extern int32 REGFILE[6][2];                 /* R0-R5, two sets */
 
 for (i = 0; i < BOOT_LEN; i++)
@@ -3373,9 +3372,10 @@ const char helpString[] =
      /****************************************************************************/
     "1 Dependencies\n"
 #if defined(_WIN32)
-    " The WinPcap package must be installed in order to enable\n"
+    " The NPcap or WinPcap package must be installed in order to enable\n"
     " communication with other computers on the local LAN.\n"
     "\n"
+    " The NPcap package is available from https://github.com/nmap/npcap\n"
     " The WinPcap package is available from http://www.winpcap.org/\n"
 #else
     " To build simulators with the ability to communicate to other computers\n"
@@ -3421,6 +3421,9 @@ const char helpString[] =
     " The other simulated Ethernet devices include:\n"
     "\n"
     "++DEUNA/DELUA  Unibus PDP11 and VAX simulators\n"
+    "++XS           VAX simulators\n"
+    "++NI           AT&T 3b2 simulator\n"
+    "++NIA-20       KL10 simulator\n"
     "\n"
     ;
 return scp_help (st, dptr, uptr, flag, helpString, cptr);

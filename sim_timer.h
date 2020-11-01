@@ -110,6 +110,7 @@ int32 sim_rtcn_init (int32 time, int32 tmr);
 int32 sim_rtcn_init_unit (UNIT *uptr, int32 time, int32 tmr);
 int32 sim_rtcn_init_unit_ticks (UNIT *uptr, int32 time, int32 tmr, int32 ticksper);
 void sim_rtcn_get_time (struct timespec *now, int tmr);
+time_t sim_get_time (time_t *now);
 t_stat sim_rtcn_tick_ack (uint32 time, int32 tmr);
 void sim_rtcn_init_all (void);
 int32 sim_rtcn_calb (uint32 ticksper, int32 tmr);
@@ -158,6 +159,7 @@ t_stat sim_os_set_thread_priority (int below_normal_above);
 uint32 sim_get_rom_delay_factor (void);
 void sim_set_rom_delay_factor (uint32 delay);
 int32 sim_rom_read_with_delay (int32 val);
+double sim_host_speed_factor (void);
 
 extern t_bool sim_idle_enab;                        /* idle enabled flag */
 extern volatile t_bool sim_idle_wait;               /* idle waiting flag */

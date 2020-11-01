@@ -40,7 +40,7 @@ t_stat fp_cfg(void);
 
 extern uint8 EPROM_get_mbyte(uint16 addr);
 extern t_stat EPROM_reset(DEVICE *dptr);
-extern t_stat EPROM_cfg(uint16 base, uint16 size);
+extern t_stat EPROM_cfg(uint16 base, uint16 size, uint8 devnum);
 
 // external globals
 
@@ -52,7 +52,7 @@ extern uint16 PCX;                    /* program counter */
 t_stat fp_cfg(void)
 {
     sim_printf("Configuring MDS-800 Front Panel Module\n  Onboard Devices:\n");
-    EPROM_cfg(ROM0_BASE, ROM0_SIZE);
+    EPROM_cfg(ROM_BASE_0, ROM_SIZE_0, 0);
     return SCPE_OK;
 }
 

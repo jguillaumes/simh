@@ -501,8 +501,8 @@ REG cpu_reg[] = {
     { FLDATA (DRMOD, drmod, 0) },
     { FLDATA (SRPOS, srpos, 0) },
     { HRDATA (DRPOS, drpos, 3) },
-    { BRDATA (IRQ, int_req, 16, 32, 8) },
-    { BRDATA (IEN, int_enb, 16, 32, 8) },
+    { BRDATA (IRQ, int_req, 16, 32, 4) },
+    { BRDATA (IEN, int_enb, 16, 32, 4) },
     { HRDATA (QEVENT, qevent, 4), REG_HRO },
     { FLDATA (STOP_INST, stop_inst, 0) },
     { FLDATA (STOP_WAIT, stop_inst, 0) },
@@ -596,7 +596,7 @@ while (reason == 0) {                                   /* loop until halted */
     uint32 dev, drom, inc, lim, opnd;
     uint32 op, r1, r1p1, r2, ea = 0, oPC;
     uint32 rslt, t, map;
-    uint32 ir1, ir2, ityp;
+    uint32 ir1, ir2 = 0, ityp;
     int32 sr, st;
 
     if (sim_interval <= 0) {                            /* check clock queue */

@@ -197,9 +197,9 @@ REG                 dtc_reg[] = {
     {ORDATAD(NLINES, dtc_desc.lines, 8, "Buffer size"), REG_HRO},
     {BRDATA(BUF, dtc_buf, 16, 8, sizeof(dtc_buf)), REG_HRO},
     {BRDATA(LSTAT, dtc_lstatus, 16, 8, sizeof(dtc_lstatus)), REG_HRO},
-    {BRDATA(BUFPTR, dtc_bufptr, 16, 16, sizeof(dtc_bufptr)), REG_HRO},
-    {BRDATA(BUFSIZ, dtc_bsize, 16, 16, sizeof(dtc_bsize)), REG_HRO},
-    {BRDATA(BUFLIM, dtc_blimit, 16, 16, sizeof(dtc_blimit)), REG_HRO},
+    {BRDATA(BUFPTR, dtc_bufptr, 16, 16, sizeof(dtc_bufptr)/sizeof(uint16)), REG_HRO},
+    {BRDATA(BUFSIZ, dtc_bsize, 16, 16, sizeof(dtc_bsize)/sizeof(uint16)), REG_HRO},
+    {BRDATA(BUFLIM, dtc_blimit, 16, 16, sizeof(dtc_blimit)/sizeof(uint16)), REG_HRO},
     {0}
 };
 
@@ -714,7 +714,7 @@ dtco_srv(UNIT * uptr)
                     c1 = '\n';          /* LF */
                     break;
                  case 076:      /* < */
-                    c1 = 0;             /* X-ON */
+                    c1 = 021;           /* X-ON */
                     break;
                  case 016:      /* > */
                     c1 = 0;             /* DEL */
@@ -728,8 +728,9 @@ dtco_srv(UNIT * uptr)
                     continue;   /* On to next line */
                  }
                  sim_debug(DEBUG_DATA, &dtc_dev,
-                        "Datacomm transmit %d %02o %c\n", ln, c&077, c1);
-                 tmxr_putc_ln(&dtc_ldsc[ln], c1);
+                        "Datacomm transmit %d %02o %c\n", ln, c, isprint(c1)?c1:'?');
+                 if (c1 != 0)
+                     tmxr_putc_ln(&dtc_ldsc[ln], c1);
                  if (c1 == '\n') {
                      tmxr_putc_ln(&dtc_ldsc[ln], '\r');
                  }

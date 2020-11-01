@@ -30,7 +30,6 @@
 */
 
 #include "vax_defs.h"
-#include <time.h>
 
 #ifdef DONT_USE_INTERNAL_ROM
 #define BOOT_CODE_FILENAME "ka410.bin"
@@ -483,6 +482,14 @@ switch (rg) {
         val = VAX410_SID | VAX410_UREV;
         break;
 
+    case MT_ICR:                                        /* for NetBSD */
+        val = 0;
+        break;
+
+    case MT_TXCS:                                       /* for Ultrix */
+        val = 0;
+        break;
+
     default:
         RSVD_OPND_FAULT(ReadIPR);
         }
@@ -513,6 +520,9 @@ switch (rg) {
 
     case MT_CONPSL:                                     /* console PSL */
         conpsl = val;
+        break;
+
+    case MT_TXCS:                                       /* for Ultrix */
         break;
 
     default:
@@ -880,7 +890,7 @@ ka_mser = 0;
 ka_mear = 0;
 ka_cfgtst = (CFGT_TYP | CFGT_CUR);
 if (MEMSIZE > (1u << 21))                               /* more than 2MB? */
-    ka_cfgtst |= ((MEMSIZE >> 21) & CFGT_MEM);
+    ka_cfgtst |= (((MEMSIZE - (1u << 21)) >> 21) & CFGT_MEM);
 if ((vc_dev.flags & DEV_DIS) == 0)                      /* mono video enabled? */
     ka_cfgtst &= ~CFGT_TYP;
 if ((va_dev.flags & DEV_DIS) == 0) {                    /* video option present? */

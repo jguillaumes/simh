@@ -40,7 +40,7 @@
 
 #ifdef NUM_DEVS_LPR
 
-#define UNIT_LPR        UNIT_ATTABLE | UNIT_DISABLE
+#define UNIT_LPR        UNIT_ATTABLE | UNIT_DISABLE | UNIT_SEQ
 #define ECHO            (1 << UNIT_V_LOCAL)
 
 
@@ -168,7 +168,6 @@ print_line(UNIT * uptr, int chan, int unit)
     uint16              buff[80];       /* Temp conversion buffer */
     int                 i, j;
     int                 outsel = uptr->u3;
-    int                 prt_flg = 1;
 
     if ((uptr->flags & (UNIT_ATT | ECHO)) == 0)
         return SCPE_UNATT;      /* attached? */
@@ -660,6 +659,7 @@ lpr_attach(UNIT * uptr, CONST char *file)
 {
     t_stat              r;
 
+    sim_switches |= SWMASK ('A');   /* Position to EOF */
     if ((r = attach_unit(uptr, file)) != SCPE_OK)
         return r;
     uptr->u5 = 0;
@@ -669,8 +669,6 @@ lpr_attach(UNIT * uptr, CONST char *file)
 t_stat
 lpr_detach(UNIT * uptr)
 {
-    int                 u = (uptr - lpr_unit);
-
     return detach_unit(uptr);
 }
 

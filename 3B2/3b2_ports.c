@@ -42,14 +42,12 @@
  *
  */
 
+#include "3b2_defs.h"
 #include "3b2_ports.h"
 
 /* Static function declarations */
 static t_stat ports_show_queue_common(FILE *st, UNIT *uptr, int32 val,
                                       CONST void *desc, t_bool rq);
-
-extern CIO_STATE cio[CIO_SLOTS];
-extern UNIT cio_unit;
 
 /* Device and units for PORTS cards
  * --------------------------------
@@ -695,7 +693,7 @@ t_stat ports_cio_svc(UNIT *uptr)
 
 t_stat ports_rcv_svc(UNIT *uptr)
 {
-    uint8 cid, subdev;
+    uint8 cid;
     int32 temp, ln;
     char c;
     cio_entry rentry = {0};
@@ -716,7 +714,6 @@ t_stat ports_rcv_svc(UNIT *uptr)
 
     for (ln = 0; ln < ports_desc.lines; ln++) {
         cid = LCID(ln);
-        subdev = LPORT(ln);
 
         if (!ports_ldsc[ln].conn && ports_state[ln].conn) {
             ports_update_conn(ln);

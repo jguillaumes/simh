@@ -40,24 +40,22 @@
 
 /* function prototypes */
 
-t_stat EPROM_cfg(uint16 base, uint16 size);
+t_stat EPROM_cfg (uint16 base, uint16 size, uint8 devnum);
 t_stat EPROM_attach (UNIT *uptr, CONST char *cptr);
 t_stat EPROM_reset (DEVICE *dptr);
-uint8 EPROM_get_mbyte(uint16 addr);
+uint8 EPROM_get_mbyte (uint16 addr, uint8 devnum);
 
 /* external function prototypes */
 
 /* external globals */
 
-extern uint8 xack;                   /* XACK signal */
-extern uint8 i8255_C[4];                    //port C byte I/O
-
 /* globals */
 
 /* SIMH EPROM Standard I/O Data Structures */
 
-UNIT EPROM_unit = {
-    UDATA (NULL, UNIT_ATTABLE+UNIT_BINK+UNIT_ROABLE+UNIT_RO+UNIT_BUFABLE+UNIT_MUSTBUF, 0), 0
+UNIT EPROM_unit[] = {
+    {UDATA (NULL, UNIT_ATTABLE+UNIT_BINK+UNIT_ROABLE+UNIT_RO+UNIT_BUFABLE+UNIT_MUSTBUF, 0), 0},
+    {UDATA (NULL, UNIT_ATTABLE+UNIT_BINK+UNIT_ROABLE+UNIT_RO+UNIT_BUFABLE+UNIT_MUSTBUF, 0), 0}
 };
 
 DEBTAB EPROM_debug[] = {
@@ -73,10 +71,10 @@ DEBTAB EPROM_debug[] = {
 
 DEVICE EPROM_dev = {
     "EPROM",            //name
-    &EPROM_unit,        //units
+    EPROM_unit,         //units
     NULL,               //registers
     NULL,               //modifiers
-    1,                  //numunits
+    EPROM_NUM,          //numunits
     16,                 //aradix
     16,                 //awidth
     1,                  //aincr
@@ -84,7 +82,7 @@ DEVICE EPROM_dev = {
     8,                  //dwidth
     NULL,               //examine
     NULL,               //deposit
-    EPROM_reset,        //reset
+    &EPROM_reset,        //reset
     NULL,               //boot
     &EPROM_attach,      //attach
     NULL,               //detach
@@ -100,12 +98,17 @@ DEVICE EPROM_dev = {
 
 // EPROM configuration
 
-t_stat EPROM_cfg(uint16 base, uint16 size)
+t_stat EPROM_cfg(uint16 base, uint16 size, uint8 devnum)
 {
-    EPROM_unit.capac = size;        /* set EPROM size */
-    EPROM_unit.u3 = base & 0xFFFF;  /* set EPROM base */
-    sim_printf("    EPROM: 0%04XH bytes at base 0%04XH\n",
-        EPROM_unit.capac, EPROM_unit.u3);
+    EPROM_unit[devnum].capac = size;        /* set EPROM size */
+    EPROM_unit[devnum].u3 = base & 0xFFFF;  /* set EPROM base */
+    EPROM_unit[devnum].filebuf = (uint8 *)calloc(size, sizeof(uint8));
+    if (EPROM_unit[devnum].filebuf == NULL) {
+        sim_printf ("    EPROM[%d]: Calloc error\n", devnum);
+        return SCPE_MEM;
+    }
+    sim_printf("    EPROM[%d]: 0%04XH bytes at base 0%04XH\n",
+        devnum, EPROM_unit[devnum].capac, EPROM_unit[devnum].u3);
     return SCPE_OK;
 }
 
@@ -113,6 +116,10 @@ t_stat EPROM_cfg(uint16 base, uint16 size)
 
 t_stat EPROM_reset (DEVICE *dptr)
 {
+//    uint8 devnum;
+    
+//    for (devnum = 0; devnum <= EPROM_NUM; devnum++) {
+//    }
     return SCPE_OK;
 }
 
@@ -131,21 +138,12 @@ t_stat EPROM_attach (UNIT *uptr, CONST char *cptr)
 
 /*  get a byte from memory */ 
 
-uint8 EPROM_get_mbyte(uint16 addr)
+uint8 EPROM_get_mbyte(uint16 addr, uint8 devnum)
 {
     uint8 val;
 
-    if ((addr >= EPROM_unit.u3) && ((uint16) addr <= (EPROM_unit.u3 + EPROM_unit.capac))) {
-        SET_XACK(1);                /* good memory address */
-        val = *((uint8 *)EPROM_unit.filebuf + (addr - EPROM_unit.u3));
-        val &= 0xFF;
-        return val;
-    } else {
-        SET_XACK(0);                /* bad memory address */
-        sim_printf("EPROM:  Out of range\n");
-    }
-    SET_XACK(0);                    /* bad memory address */
-    return 0;
+    val = *((uint8 *)EPROM_unit[devnum].filebuf + (addr - EPROM_unit[devnum].u3));
+    return (val &= 0xFF);
 }
 
 /* end of iEPROM.c */

@@ -30,7 +30,6 @@
 #include "besm6_defs.h"
 #include "sim_sock.h"
 #include "sim_tmxr.h"
-#include <time.h>
 
 #define TTY_MAX         24              /* Serial TTY lines */
 #define LINES_MAX       TTY_MAX + 2     /* Including parallel "Consul" typewriters */
@@ -239,7 +238,7 @@ t_stat vt_clk (UNIT * this)
         }
         tmxr_linemsg (t, buf);
         tty_idle_count[num] = 0;
-        tty_last_time[num] = time (0);
+        tty_last_time[num] = sim_get_time (0);
         sprintf (buf, "%.24s from %s\r\n",
                  ctime (&tty_last_time[num]),
                  t->ipad);
@@ -491,7 +490,7 @@ DEVICE tty_dev = {
     "TTY", tty_unit, tty_reg, tty_mod,
     27, 2, 1, 1, 2, 1,
     NULL, NULL, &tty_reset, NULL, &tty_attach, &tty_detach,
-    NULL, DEV_NET|DEV_DEBUG
+    NULL, DEV_MUX|DEV_DEBUG
 };
 
 void tty_send (uint32 mask)
@@ -1061,7 +1060,7 @@ int vt_getc (int num)
         /* A telnet line. */
         c = tmxr_getc_ln (t);
         if (! (c & TMXR_VALID)) {
-            now = time (0);
+            now = sim_get_time (0);
             if (now > tty_last_time[num] + 5*60) {
                 ++tty_idle_count[num];
                 if (tty_idle_count[num] > 3) {
@@ -1075,7 +1074,7 @@ int vt_getc (int num)
             return -1;
         }
         tty_idle_count[num] = 0;
-        tty_last_time[num] = time (0);
+        tty_last_time[num] = sim_get_time (0);
 
         if (tty_unit[num].flags & TTY_CMDLINE_MASK) {
             /* Continuing CLI mode. */

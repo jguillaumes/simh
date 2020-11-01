@@ -30,18 +30,19 @@
 
 /* function prototypes */
 
+t_stat SBC_config(void);
+t_stat SBC_reset (DEVICE *dptr);
 uint8 get_mbyte(uint16 addr);
 uint16 get_mword(uint16 addr);
 void put_mbyte(uint16 addr, uint8 val);
 void put_mword(uint16 addr, uint16 val);
-t_stat SBC_reset (DEVICE *dptr);
 
 /* external function prototypes */
 
 extern t_stat i8080_reset (DEVICE *dptr);   /* reset the 8080 emulator */
 extern uint8 multibus_get_mbyte(uint16 addr);
 extern void  multibus_put_mbyte(uint16 addr, uint8 val);
-extern uint8 EPROM_get_mbyte(uint16 addr);
+extern uint8 EPROM_get_mbyte(uint16 addr, uint8 devnum);
 extern uint8 RAM_get_mbyte(uint16 addr);
 extern void RAM_put_mbyte(uint16 addr, uint8 val);
 extern t_stat i8251_cfg(uint8 base, uint8 devnum);
@@ -59,9 +60,8 @@ extern t_stat ipc_cont_cfg(uint8 base, uint8 devnum);
 extern t_stat ioc_cont_reset(DEVICE *dptr);
 extern t_stat ioc_cont_cfg(uint8 base, uint8 devnum); 
 extern uint8 reg_dev(uint8 (*routine)(t_bool, uint8, uint8), uint8, uint8);
-extern t_stat EPROM_cfg(uint16 base, uint16 size);
+extern t_stat EPROM_cfg(uint16 base, uint16 size, uint8 devnum);
 extern t_stat RAM_cfg(uint16 base, uint16 size);
-extern t_stat multibus_cfg();   
 
 /* globals */
 
@@ -69,7 +69,8 @@ int onetime = 0;
 
 /* extern globals */
 
-extern uint16 PCX;                    /* program counter */
+extern uint16 PCX;                      /* program counter */
+extern uint8 xack;                      /* XACK signal */
 extern UNIT i8255_unit;
 extern UNIT EPROM_unit;
 extern UNIT RAM_unit;
@@ -95,7 +96,7 @@ t_stat SBC_config(void)
     i8259_cfg(I8259_BASE_1, 1); 
     ipc_cont_cfg(ICONT_BASE, 0); 
     ioc_cont_cfg(DBB_BASE, 0); 
-    EPROM_cfg(ROM_BASE, ROM_SIZE);
+    EPROM_cfg(ROM_BASE, ROM_SIZE, 0);
     RAM_cfg(RAM_BASE, RAM_SIZE);
     return SCPE_OK;
 }
@@ -107,7 +108,6 @@ t_stat SBC_reset (DEVICE *dptr)
 {    
     if (onetime == 0) {
         SBC_config();   
-        multibus_cfg();   
         onetime++;
     }
     i8080_reset(&i8080_dev);
@@ -124,19 +124,20 @@ t_stat SBC_reset (DEVICE *dptr)
 
 uint8 get_mbyte(uint16 addr)
 {
+    SET_XACK(0);                        /* set XACK */
     if (addr >= 0xF800) {               //monitor ROM - always there
-        return EPROM_get_mbyte(addr - 0xF000); //top half of EPROM
+        return EPROM_get_mbyte(addr - 0xF000, 0); //top half of EPROM
     }
     if ((addr < 0x1000) && ((ipc_cont_unit.u3 & 0x04) == 0)) { //startup
-        return EPROM_get_mbyte(addr);   //top half of EPROM for boot
+        return EPROM_get_mbyte(addr, 0);   //top half of EPROM for boot
     }
     if ((addr >= 0xE800) && (addr < 0xF000) && ((ipc_cont_unit.u3 & 0x10) == 0)) { //diagnostic ROM
-        return EPROM_get_mbyte(addr - 0xE800); //bottom half of EPROM
+        return EPROM_get_mbyte(addr - 0xE800, 0); //bottom half of EPROM
     }
-    if (addr < 0x8000)                  //IPB RAM
+    if (addr < 0x8000) {                //IPB RAM
         return RAM_get_mbyte(addr);
-    else
-        return multibus_get_mbyte(addr); //check multibus cards
+    }
+    return multibus_get_mbyte(addr);    //check multibus cards
 }
 
 /*  get a word from memory */
@@ -154,14 +155,15 @@ uint16 get_mword(uint16 addr)
 
 void put_mbyte(uint16 addr, uint8 val)
 {
+    SET_XACK(0);                        /* set no XACK */
     if (addr >= 0xF800) {               //monitor ROM - always there
-        return;
+        return;                         //do nothing
     } 
     if ((addr < 0x1000) && ((ipc_cont_unit.u3 & 0x04) == 0)) { //startup
-        return;
+        return;                         //do nothing
     }
     if ((addr >= 0xE800) && (addr < 0xF000) && ((ipc_cont_unit.u3 & 0x10) == 0)) { //diagnostic ROM
-        return;
+        return;                         //do nothing
     }
     if (addr < 0x8000) {
         RAM_put_mbyte(addr, val);       //IPB RAM

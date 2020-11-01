@@ -169,8 +169,8 @@ uint32 IM = 0;                          /* Interrupt Mask Register */
 uint8  xack = 0;                        /* XACK signal */
 uint32 int_req = 0;                     /* Interrupt request */
 uint8 INTA = 0;                         // interrupt acknowledge
-uint16 PCX;                              /* External view of PC */
-uint16 PCY;                              /* Internal view of PC */
+uint16 PCX;                             /* External view of PC */
+uint16 PCY;                             /* Internal view of PC */
 uint16 PC;
 UNIT *uptr;
 uint16 port;                            //port used in any IN/OUT
@@ -294,7 +294,11 @@ DEVICE i8080_dev = {
     0,                                  //dctrl 
     i8080_debug,                        //debflags
     NULL,                               //msize
-    NULL                                //lname
+    NULL,                               //lname
+    NULL,                               //help routine
+    NULL,                               //attach help routine
+    NULL,                               //help context
+    NULL                                //device description
 };
 
 /* tables for the disassembler */
@@ -403,10 +407,9 @@ int32 sim_instr(void)
 
     if (onetime++ == 0) {
         if (uptr->flags & UNIT_8085)
-            sim_printf("CPU = 8085\n");
+            sim_printf("    CPU = 8085\n");
         else
-            sim_printf("CPU = 8080\n");
-        sim_printf("    i8080:\n");
+            sim_printf("    CPU = 8080\n");
     }
     
     /* Main instruction fetch/decode loop */
@@ -443,7 +446,7 @@ int32 sim_instr(void)
                         PC = 0x002C;
                         int_req &= ~I55;
                     } else if (int_req & INT_R) { /* intr */
-                        push_word(PC);      /* do an RST 7 */
+                        push_word(PC);  /* do an RST 7 */
                         PC = 0x0038;
                         int_req &= ~INT_R;
                     }
@@ -475,14 +478,11 @@ int32 sim_instr(void)
         
         IR = OP = fetch_byte(0);        /* instruction fetch */
 
-        /*
         if (GET_XACK(1) == 0) {         // no XACK for instruction fetch
-            reason = STOP_XACK;
-//        if (uptr->flags & UNIT_XACK) 
-            sim_printf("Failed XACK for Instruction Fetch from %04X\n", PCX);
-            continue;
+//            reason = STOP_XACK;
+//            sim_printf("Failed XACK for Instruction Fetch from %04X\n", PCX);
+//            continue;
          }
-         */
 
         // first instruction decode
         if (OP == 0x76) {               /* HLT Instruction*/
@@ -906,19 +906,15 @@ int32 sim_instr(void)
         }
 loop_end:
 
-        /*
         if (GET_XACK(1) == 0) {     // no XACK for operand fetch
-            reason = STOP_XACK;
-            if (OP == 0xD3 || OP == 0xDB) {
-//                if (uptr->flags & UNIT_XACK) 
-                    sim_printf("Failed XACK for Port %02X Fetch from %04X\n", port, PCX);
-            } else {
-//                if (uptr->flags & UNIT_XACK) 
-                    sim_printf("Failed XACK for Operand %04X Fetch from %04X\n", addr, PCX);
-            continue;
-            }
+//            reason = STOP_XACK;
+//            if (OP == 0xD3 || OP == 0xDB) {
+//                    sim_printf("Failed XACK for Port %02X Fetch from %04X\n", port, PCX);
+//            } else {
+//                    sim_printf("Failed XACK for Operand %04X Fetch from %04X\n", addr, PCX);
+//            continue;
+//            }
         }
-        */;
     }
 
 /* Simulation halted */

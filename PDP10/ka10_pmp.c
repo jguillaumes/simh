@@ -1,6 +1,6 @@
 /* PMP disk controller interface for WAITS.
 
-   Copyright (c) 2017, Richard Cornwell
+   Copyright (c) 2017-2020, Richard Cornwell
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -142,7 +142,7 @@
 #define DK_MSK_SKNONE      0x18       /* Allow no seeks */
 #define DK_MSK_SK          0x18       /* Seek mask */
 
-#define POS     u4 
+#define POS     u4
 /* u4 */
 /* Holds the current track and head */
 #define DK_V_TRACK         8
@@ -311,7 +311,7 @@ struct disk_t
 {
     const char         *name;         /* Type Name */
     int                 cyl;          /* Number of cylinders */
-    int                 heads;        /* Number of heads/cylinder */
+    uint32              heads;        /* Number of heads/cylinder */
     int                 bpt;          /* Max bytes per track */
     uint8               sen_cnt;      /* Number of sense bytes */
     uint8               dev_type;     /* Device type code */
@@ -335,7 +335,7 @@ disk_type[] =
 struct pmp_header
 {
        uint8    devid[8];      /* device header. */
-       int      heads;         /* number of heads per cylinder */
+       uint32   heads;         /* number of heads per cylinder */
        uint32   tracksize;     /* size of track */
        uint8    devtype;       /* Hex code of last two digits of device type. */
        uint8    fileseq;       /* always 0. */
@@ -348,9 +348,9 @@ uint64              pmp_status;      /* CONI status for device 500 */
 int                 pmp_statusb;
 uint32              pmp_cmd_hold;    /* Command hold register */
 uint32              pmp_wc_hold;     /* Word count hold */
-uint32              pmp_addr_hold;   /* Address register hold */
+t_addr              pmp_addr_hold;   /* Address register hold */
 uint32              pmp_wc;          /* Current word count register */
-uint32              pmp_addr;        /* Current address register */
+t_addr              pmp_addr;        /* Current address register */
 uint64              pmp_data;        /* Data assembly register */
 int                 pmp_cnt;         /* Character count in asm register */
 int                 pmp_cmd;         /* Current command */
@@ -382,7 +382,7 @@ t_stat              pmp_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag,
                         const char *cptr);
 const char          *pmp_description (DEVICE *dptr);
 
-DIB pmp_dib[] = { 
+DIB pmp_dib[] = {
     {PMP_DEV, 2, &pmp_devio, NULL}};
 
 
@@ -433,13 +433,13 @@ pmp_devio(uint32 dev, uint64 *data) {
           if ((pmp_statusb & (WCMA_LD|CMD_LD)) != (WCMA_LD|CMD_LD))
               *data |= HOLD_EMPTY;
           if (pmp_cur_unit != NULL)
-              *data |= ((uint64)GET_UADDR(pmp_cur_unit->flags)) << 24; 
+              *data |= ((uint64)GET_UADDR(pmp_cur_unit->flags)) << 24;
           if ((pmp_status & (NXM_ERR|CHA_ERR|SEL_ERR)) != 0)
               *data |= UNU_END;
           sim_debug(DEBUG_CONI, &pmp_dev, "PMP %03o CONI %012llo PC=%o\n",
                dev, *data, PC);
           break;
-    
+
      case CONO:
           sim_debug(DEBUG_CONO, &pmp_dev, "PMP %03o CONO %012llo PC=%06o\n",
                     dev, *data, PC);
@@ -550,22 +550,25 @@ pmp_checkirq() {
           sim_debug(DEBUG_DETAIL, &pmp_dev, "parity irq\n");
         f = 1;
     }
-    if ((pmp_irq & IRQ_EMPTY) != 0 && (pmp_statusb & (WCMA_LD|CMD_LD)) != (WCMA_LD|CMD_LD))  {
+    if ((pmp_irq & IRQ_EMPTY) != 0 &&
+               (pmp_statusb & (WCMA_LD|CMD_LD)) != (WCMA_LD|CMD_LD))  {
           sim_debug(DEBUG_DETAIL, &pmp_dev, "load irq\n");
         f = 1;
     }
     if ((pmp_irq & IRQ_IDLE) != 0 && (pmp_statusb & (OP1|IDLE_CH)) == IDLE_CH) {
           sim_debug(DEBUG_DETAIL, &pmp_dev, "idle irq\n");
         f = 1;
-}
-    if ((pmp_irq & IRQ_UEND) != 0 && (pmp_status & (NXM_ERR|CHA_ERR|SEL_ERR|UNU_END)) != 0) {
+    }
+    if ((pmp_irq & IRQ_UEND) != 0 &&
+                (pmp_status & (NXM_ERR|CHA_ERR|SEL_ERR|UNU_END)) != 0) {
           sim_debug(DEBUG_DETAIL, &pmp_dev, "uend irq\n");
         f = 1;
-}
+    }
     if ((pmp_status & pmp_irq & (IRQ_NSTS|IRQ_STS)) != 0) {
-          sim_debug(DEBUG_DETAIL, &pmp_dev, "mem sts %o\n", (int)(pmp_status & pmp_irq & (IRQ_NSTS|IRQ_STS)));
+          sim_debug(DEBUG_DETAIL, &pmp_dev, "mem sts %o\n",
+               (int)(pmp_status & pmp_irq & (IRQ_NSTS|IRQ_STS)));
         f = 1;
-}
+    }
     if (f)
         set_interrupt(PMP_DEV, pmp_pia);
     return f;
@@ -597,10 +600,10 @@ chan_read_byte(uint8 *data) {
     pmp_statusb |= TRANS_CH;                 /* Tranfer in progress */
     /* Read in next work if buffer is in empty status */
     if (pmp_cnt & BUFF_EMPTY) {
-        if (pmp_addr >= (int)MEMSIZE) 
+        if (Mem_read_word(pmp_addr, &pmp_data, 0))
             return pmp_posterror(NXM_ERR);
-        pmp_data = M[pmp_addr];
-         sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_read %06o %012llo\n", pmp_addr, pmp_data);
+         sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_read %06o %012llo\n",
+                pmp_addr, pmp_data);
         pmp_addr++;
         pmp_cnt = 0;
         xfer = 1;  /* Read in a word */
@@ -616,10 +619,10 @@ chan_read_byte(uint8 *data) {
         if ((pmp_cnt & 0xf) > 0x3) {
            if ((pmp_cnt & 0xf) == 0x4) {   /* Split byte */
               byte = (pmp_data << 4) & 0xf0;
-              if (pmp_addr >= (int)MEMSIZE)
+              if (Mem_read_word(pmp_addr, &pmp_data, 0))
                   return pmp_posterror(NXM_ERR);
-              pmp_data = M[pmp_addr];
-         sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_read %06o %012llo\n", pmp_addr, pmp_data);
+              sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_read %06o %012llo\n",
+                     pmp_addr, pmp_data);
               pmp_addr++;
               xfer = 1;  /* Read in a word */
               byte |= pmp_data & 0xf;
@@ -639,30 +642,9 @@ chan_read_byte(uint8 *data) {
      } else if (xfer) {
          pmp_wc ++;
      }
-     if (pmp_wc & 07000000) 
+     if (pmp_wc & 07000000)
          pmp_cnt |= BUFF_CHNEND;
      return 0;
-#if 0
-next:
-     /* If not data channing, let device know there will be no
-      * more data to come
-      */
-     if ((pmp_cmd & DATCH_ON) == 0) {
-         pmp_cnt = BUFF_CHNEND;
-         sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_read_end\n");
-         return 1;
-     } else {
-         if (pmp_statusb & WCMA_LD) {
-             pmp_statusb &= ~(WCMA_LD);
-             pmp_addr = pmp_addr_hold;
-             pmp_wc = pmp_wc_hold;
-             pmp_data = 0;
-         } else {
-             return pmp_posterror(CHA_ERR);
-         }
-     }
-     goto load;
-#endif
 }
 
 /* write byte to memory */
@@ -693,11 +675,11 @@ chan_write_byte(uint8 *data) {
         pmp_cnt |= BUFF_DIRTY;
         if ((pmp_cnt & 03) == 0) {
             pmp_cnt &= ~(BUFF_DIRTY|7);
-            if (pmp_addr >= (int)MEMSIZE)
+            if (Mem_write_word(pmp_addr, &pmp_data, 0))
                 return pmp_posterror(NXM_ERR);
-            M[pmp_addr] = pmp_data;
-              sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_write %06o %012llo\n", pmp_addr, pmp_data);
-              pmp_addr++;
+            sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_write %06o %012llo\n",
+                          pmp_addr, pmp_data);
+            pmp_addr++;
             xfer = 1;
         }
     } else {
@@ -705,10 +687,10 @@ chan_write_byte(uint8 *data) {
            if ((pmp_cnt & 0xf) == 0x4) {   /* Split byte */
               pmp_data &= ~0xf;
               pmp_data |= (uint64)((*data >> 4) & 0xf);
-              if (pmp_addr >= (int)MEMSIZE)
+              if (Mem_write_word(pmp_addr, &pmp_data, 0))
                   return pmp_posterror(NXM_ERR);
-              M[pmp_addr] = pmp_data;
-              sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_write %06o %012llo %2x\n", pmp_addr, pmp_data, pmp_cnt);
+              sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_write %06o %012llo %2x\n",
+                         pmp_addr, pmp_data, pmp_cnt);
               pmp_addr++;
               xfer = 1;  /* Read in a word */
               pmp_data = *data & 0xf;
@@ -726,10 +708,10 @@ chan_write_byte(uint8 *data) {
         pmp_cnt++;
         if ((pmp_cnt & 0xf) == 9) {
             pmp_cnt = BUFF_EMPTY;
-            if (pmp_addr >= (int)MEMSIZE)
+            if (Mem_write_word(pmp_addr, &pmp_data, 0))
                 return pmp_posterror(NXM_ERR);
-            M[pmp_addr] = pmp_data;
-            sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_write %06o %012llo %2x\n", pmp_addr, pmp_data, pmp_cnt);
+            sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_write %06o %012llo %2x\n",
+                         pmp_addr, pmp_data, pmp_cnt);
             pmp_addr++;
             xfer = 1;  /* Read in a word */
         }
@@ -774,16 +756,15 @@ chan_end(uint8 flags) {
     /* Flush buffer if there was any change */
     if (pmp_cnt & BUFF_DIRTY) {
         pmp_cnt = BUFF_EMPTY;
-        if (pmp_addr >= (int)MEMSIZE) {
+        if (Mem_write_word(pmp_addr, &pmp_data, 0)) {
             (void) pmp_posterror(NXM_ERR);
             return;
         }
-        M[pmp_addr] = pmp_data;
         sim_debug(DEBUG_DATA, &pmp_dev, "chan_write %012llo\n", pmp_data);
         pmp_addr++;
     }
     pmp_statusb &= ~TRANS_CH;                 /* Clear transfer in progress */
-    pmp_statusb |= IDLE_CH; 
+    pmp_statusb |= IDLE_CH;
     pmp_status |= NEW_STS | CHN_END | ((uint64)flags) << 5;
 
     if (pmp_status & (BSY|UNIT_CHK))
@@ -792,13 +773,14 @@ chan_end(uint8 flags) {
     /* If channel is also finished, then skip any more data commands. */
     if (pmp_status & (CHN_END|DEV_END)) {
         pmp_cnt = BUFF_CHNEND;
-        sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_endc %012llo %06o\n", pmp_status, pmp_cmd);
+        sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_endc %012llo %06o\n",
+                         pmp_status, pmp_cmd);
 
         /* While command has chain data set, continue to skip */
         if (pmp_cmd & DATCH_ON) {
             (void) pmp_posterror(CHA_ERR);
             return;
-        } 
+        }
 
         if (pmp_cmd & CMDCH_ON) {
            pmp_startcmd();
@@ -808,7 +790,8 @@ chan_end(uint8 flags) {
         /* Indicate that device is done */
         pmp_statusb &= ~OP1;
     }
-    sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_endf %012llo %06o\n", pmp_status, pmp_statusb);
+    sim_debug(DEBUG_DETAIL, &pmp_dev, "chan_endf %012llo %06o\n",
+                         pmp_status, pmp_statusb);
     (void)pmp_checkirq();
 }
 
@@ -959,7 +942,8 @@ pmp_startcmd() {
          pmp_statusb &= ~IDLE_CH;
          pmp_cur_unit->CMD &= ~(DK_PARAM);
          pmp_cur_unit->CMD |= cmd;
-         sim_debug(DEBUG_CMD, &pmp_dev, "CMD unit=%d CMD=%02x\n", unit, pmp_cur_unit->CMD);
+         sim_debug(DEBUG_CMD, &pmp_dev, "CMD unit=%d CMD=%02x\n", unit,
+                         pmp_cur_unit->CMD);
          return;
 
     case 0x0:               /* Status */
@@ -984,7 +968,6 @@ pmp_startcmd() {
 void
 pmp_adjpos(UNIT * uptr)
 {
-    uint16              addr = GET_UADDR(uptr->flags);
     struct pmp_t      *data = (struct pmp_t *)(uptr->DATAPTR);
     uint8               *rec;
     int                 pos;
@@ -1113,7 +1096,7 @@ t_stat pmp_srv(UNIT * uptr)
                  goto index;
              }
              uptr->POS ++;
-             if ((uptr->POS & 0xff) >= disk_type[type].heads) {
+             if ((uint32)(uptr->POS & 0xff) >= disk_type[type].heads) {
                  sim_debug(DEBUG_DETAIL, dptr, "end cyl unit=%d %02x %d\n",
                            unit, state, data->tpos);
                  uptr->SENSE = (SNS_ENDCYL << 8);
@@ -1233,8 +1216,8 @@ index:
          /* Compute delay based of difference. */
          /* Set next state = index */
          i = (uptr->POS >> 8) - data->cyl;
-         sim_debug(DEBUG_DETAIL, dptr, "seek unit=%d %d %d s=%x\n", unit, uptr->POS >> 8, i,
-                 data->state);
+         sim_debug(DEBUG_DETAIL, dptr, "seek unit=%d %d %d s=%x\n", unit, uptr->POS >> 8,
+                 i, data->state);
          if (i == 0) {
              uptr->CMD &= ~(DK_INDEX|DK_INDEX2);
              data->state = DK_POS_INDEX;
@@ -1256,8 +1239,8 @@ index:
                 sim_activate(uptr, 200);
              }
          }
-         sim_debug(DEBUG_DETAIL, dptr, "seek next unit=%d %d %d %x\n", unit, uptr->POS >> 8,
-                data->cyl, data->state);
+         sim_debug(DEBUG_DETAIL, dptr, "seek next unit=%d %d %d %x\n", unit,
+                uptr->POS >> 8, data->cyl, data->state);
          break;
     }
 
@@ -1424,7 +1407,7 @@ sense_end:
          sim_debug(DEBUG_DETAIL, dptr, "seek unit=%d %d %d\n", unit, trk, buf[5]);
 
          /* Check if seek valid */
-         if ((buf[0] | buf[1] | buf[4]) != 0 || trk > disk_type[type].cyl
+         if ((buf[0] | buf[1] | buf[4]) != 0 || trk >= disk_type[type].cyl
                   || buf[5] >= disk_type[type].heads)  {
              uptr->LASTCMD = cmd;
              uptr->CMD &= ~(0xff);
@@ -1449,7 +1432,6 @@ sense_end:
              uptr->CMD |= DK_PARAM;
              data->state = DK_POS_SEEK;
              sim_debug(DEBUG_DETAIL, dptr, "seek unit=%d doing\n", unit);
-//             chan_end(SNS_CHNEND);
          } else {
              pmp_adjpos(uptr);
              uptr->LASTCMD = cmd;
@@ -1598,8 +1580,9 @@ sense_end:
          if (state == DK_POS_CNT && count == 0) {
              sim_debug(DEBUG_DETAIL, dptr, "search ID unit=%d %x %d %x %d\n",
                            unit, state, count, uptr->POS, data->rec);
-             sim_debug(DEBUG_DETAIL, dptr, "ID unit=%d %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                 unit, da[0], da[1], da[2], da[3], da[4], da[5], da[6], da[7]);
+             sim_debug(DEBUG_DETAIL, dptr,
+                      "ID unit=%d %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                       unit, da[0], da[1], da[2], da[3], da[4], da[5], da[6], da[7]);
              uptr->CMD &= ~(DK_SRCOK|DK_SHORTSRC|DK_NOEQ|DK_HIGH);
              uptr->CMD |= DK_PARAM;
          }
@@ -1770,7 +1753,8 @@ sense_end:
          if (count == 0 && state == DK_POS_CNT && data->rec != 0) {
              uptr->CMD |= DK_PARAM;
              uptr->CMD &= ~(DK_INDEX|DK_INDEX2);
-             sim_debug(DEBUG_DETAIL, dptr, "RD CKD unit=%d %d k=%d d=%d %02x %04x %04x\n",
+             sim_debug(DEBUG_DETAIL, dptr,
+                  "RD CKD unit=%d %d k=%d d=%d %02x %04x %04x\n",
                  unit, data->rec, data->klen, data->dlen, data->state, data->dlen,
                  8 + data->klen + data->dlen);
          }
@@ -2153,13 +2137,12 @@ int
 pmp_format(UNIT * uptr, int flag) {
     struct pmp_header  hdr;
     struct pmp_t       *data;
-    uint16              addr = GET_UADDR(uptr->flags);
     int                 type = GET_TYPE(uptr->flags);
     int                 tsize;
     int                 cyl;
     int                 sector;
     int                 rec;
-    int                 hd;
+    uint32              hd;
     uint32              pos;
 
     if (flag || get_yn("Initialize dasd? [Y] ", TRUE)) {
@@ -2178,7 +2161,7 @@ pmp_format(UNIT * uptr, int flag) {
         data->tsize = hdr.tracksize;
         if ((data->cbuf = (uint8 *)calloc(tsize, sizeof(uint8))) == 0)
             return 1;
-        for (cyl = 0; cyl <= disk_type[type].cyl; cyl++) {
+        for (cyl = 0; cyl < disk_type[type].cyl; cyl++) {
             pos = 0;
             for (hd = 0; hd < disk_type[type].heads; hd++) {
                 uint32 cpos = pos;
@@ -2242,16 +2225,17 @@ pmp_attach(UNIT * uptr, CONST char *file)
     uint16              addr = GET_UADDR(uptr->flags);
     int                 flag = (sim_switches & SWMASK ('I')) != 0;
     t_stat              r;
-    int                 i;
-    struct pmp_header  hdr;
+    unsigned int        i;
+    struct pmp_header   hdr;
     struct pmp_t       *data;
-    int                 tsize;
+    uint32              tsize;
 
     if ((r = attach_unit(uptr, file)) != SCPE_OK)
        return r;
 
     if (sim_fread(&hdr, 1, sizeof(struct pmp_header), uptr->fileref) !=
-          sizeof(struct pmp_header) || strncmp((CONST char *)&hdr.devid[0], "CKD_P370", 8) != 0 || flag) {
+          sizeof(struct pmp_header) || strncmp((CONST char *)&hdr.devid[0],
+                   "CKD_P370", 8) != 0 || flag) {
         if (pmp_format(uptr, flag)) {
             detach_unit(uptr);
             return SCPE_FMT;
@@ -2262,7 +2246,7 @@ pmp_attach(UNIT * uptr, CONST char *file)
     sim_messagef(SCPE_OK, "Drive %03x=%d %d %02x %d\n\r",  addr,
              hdr.heads, hdr.tracksize, hdr.devtype, hdr.highcyl);
     for (i = 0; disk_type[i].name != 0; i++) {
-         tsize = (disk_type[i].bpt | 0x1ff) + 1;
+         tsize = (uint32)((disk_type[i].bpt | 0x1ff) + 1);
          if (hdr.devtype == disk_type[i].dev_type && hdr.tracksize == tsize &&
              hdr.heads == disk_type[i].heads && hdr.highcyl == disk_type[i].cyl) {
              if (GET_TYPE(uptr->flags) != i) {
@@ -2292,12 +2276,14 @@ pmp_attach(UNIT * uptr, CONST char *file)
         detach_unit(uptr);
         return SCPE_ARG;
     }
-    (void)sim_fseek(uptr->fileref, sizeof(struct pmp_header), SEEK_SET);
-    (void)sim_fread(data->cbuf, 1, tsize, uptr->fileref);
-    data->cpos = sizeof(struct pmp_header);
-    data->ccyl = 0;
-    uptr->CMD |= DK_ATTN;
-    pmp_statusb |= REQ_CH;
+    if ((sim_switches & SIM_SW_REST) == 0) {
+        (void)sim_fseek(uptr->fileref, sizeof(struct pmp_header), SEEK_SET);
+        (void)sim_fread(data->cbuf, 1, tsize, uptr->fileref);
+        data->cpos = sizeof(struct pmp_header);
+        data->ccyl = 0;
+        uptr->CMD |= DK_ATTN;
+        pmp_statusb |= REQ_CH;
+    }
     sim_activate(uptr, 100);
     return SCPE_OK;
 }
@@ -2307,7 +2293,6 @@ pmp_detach(UNIT * uptr)
 {
     struct pmp_t       *data = (struct pmp_t *)uptr->DATAPTR;
     int                 type = GET_TYPE(uptr->flags);
-    uint16              addr = GET_UADDR(uptr->flags);
     int                 cmd = uptr->CMD & 0x7f;
 
     if (uptr->CMD & DK_CYL_DIRTY) {
@@ -2415,7 +2400,6 @@ pmp_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag,
     fprintf (st, ".\nEach drive has the following storage capacity:\n\n");
     for (i = 0; disk_type[i].name != 0; i++) {
         int32 size = disk_type[i].bpt * disk_type[i].heads * disk_type[i].cyl;
-        char  sm = 'K';
         size /= 1024;
         size = (10 * size) / 1024;
         fprintf(st, "      %-8s %4d.%1dMB\n", disk_type[i].name, size/10, size%10);

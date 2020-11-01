@@ -607,8 +607,6 @@ static int32 td_ctime = 150;                            /* command time */
 static int32 td_xtime = 180;                            /* tr set time */
 static int32 td_itime = 180;                            /* init time */
 
-static int32 td_regval;                                 /* temp location used in reg declarations */
-
 static int32 td_ctrls = 1;                              /* number of enabled controllers */
 
 static uint32 tdi_ireq = 0;
@@ -702,8 +700,8 @@ static REG td_reg[] = {
     { RDATA  (OFFSET, offset, 16, "offset into current transfer") },
     { RDATA  (UNITNO, unitno, 16, "active unit number") },
 
-    { BRDATAD (IBUF,   td_ctlr[0].ibuf,16, 8, 512, "input buffer"), },
-    { BRDATAD (OBUF,   td_ctlr[0].obuf,16, 8, 512, "output buffer"), },
+    { BRDATAD (IBUF,   td_ctlr[0].ibuf,16, 8, TD_NUMBY+1, "input buffer"), },
+    { BRDATAD (OBUF,   td_ctlr[0].obuf,16, 8, TD_NUMBY+1, "output buffer"), },
     { NULL }
     };
 
