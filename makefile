@@ -56,16 +56,18 @@
 # simh project support is provided for simulators that are built with 
 # dependent packages provided with the or by the operating system 
 # distribution OR for platforms where that isn't directly available 
-# (OS X) by packages from specific package management systems (MacPorts 
-# or Homebrew).  Users wanting to build simulators with locally build 
+# (OS X/macOS) by packages from specific package management systems (MacPorts 
+# or Homebrew).  Users wanting to build simulators with locally built 
 # dependent packages or packages provided by an unsupported package 
-# management system can override where this procedure looks for include 
-# files and/or libraries.  Overrides can be specified by define exported 
-# environment variables or GNU make command line arguments which specify 
-# INCLUDES and/or LIBRARIES.  
+# management system may be able to override where this procedure looks 
+# for include files and/or libraries.  Overrides can be specified by define 
+# exported environment variables or GNU make command line arguments which 
+# specify INCLUDES and/or LIBRARIES.  
 # Each of these, if specified, must be the complete list include directories
 # or library directories that should be used with each element separated by 
 # colons. (i.e. INCLUDES=/usr/include/:/usr/local/include/:...)
+# If this doesn't work for you and/or you're interested in using a different 
+# ToolChain, you're free to solve this problem on your own.  Good Luck.
 #
 # Some environments may have the LLVM (clang) compiler installed as
 # an alternate to gcc.  If you want to build with the clang compiler, 
@@ -170,6 +172,7 @@ ifneq ($(findstring Windows,${OS}),)
     endif
   endif
 endif
+
 find_exe = $(abspath $(strip $(firstword $(foreach dir,$(strip $(subst :, ,${PATH})),$(wildcard $(dir)/$(1))))))
 find_lib = $(abspath $(strip $(firstword $(foreach dir,$(strip ${LIBPATH}),$(wildcard $(dir)/lib$(1).${LIBEXT})))))
 find_include = $(abspath $(strip $(firstword $(foreach dir,$(strip ${INCPATH}),$(wildcard $(dir)/$(1).h)))))
@@ -200,6 +203,28 @@ ifeq (${WIN32},)  #*nix Environments (&& cygwin)
   ifeq (CYGWIN,$(findstring CYGWIN,$(OSTYPE))) # uname returns CYGWIN_NT-n.n-ver
     OSTYPE = cygwin
     OSNAME = windows-build
+  endif
+  ifeq (Darwin,$(OSTYPE))
+    ifeq (,$(shell which port)$(shell which brew))
+      $(info *** Info *** simh dependent packages on macOS must be provided by either the)
+      $(info *** Info *** MacPorts package system or by the HomeBrew package system.)
+      $(info *** Info *** Neither of these seem to be installed on the local system.)
+      $(info *** Info ***)
+      ifeq (,$(INCLUDES)$(LIBRARIES))
+        $(info *** Info *** Users wanting to build simulators with locally built dependent)
+        $(info *** Info *** packages or packages provided by an unsupported package)
+        $(info *** Info *** management system may be able to override where this procedure)
+        $(info *** Info *** looks for include files and/or libraries.  Overrides can be)
+        $(info *** Info *** specified by defining exported environment variables or GNU make)
+        $(info *** Info *** command line arguments which specify INCLUDES and/or LIBRARIES.)
+        $(info *** Info *** If this works, that's great, if it doesn't you are on your own!)
+      else
+        $(info *** Warning *** Attempting to build on macOS with:)
+        $(info *** Warning *** INCLUDES defined as $(INCLUDES))
+        $(info *** Warning *** and)
+        $(info *** Warning *** LIBRARIES defined as $(LIBRARIES))
+      endif
+    endif
   endif
   ifeq (,$(shell ${GCC} -v /dev/null 2>&1 | grep 'clang'))
     GCC_VERSION = $(shell ${GCC} -v /dev/null 2>&1 | grep 'gcc version' | awk '{ print $$3 }')
@@ -495,6 +520,12 @@ ifeq (${WIN32},)  #*nix Environments (&& cygwin)
         ifneq (,$(findstring Haiku,$(OSTYPE)))
           OS_CCDEFS += -DUSE_READER_THREAD -DSIM_ASYNCH_IO 
           $(info using libpthread: $(call find_include,pthread))
+        else
+          ifeq (Darwin,$(OSTYPE))
+            OS_CCDEFS += -DUSE_READER_THREAD -DSIM_ASYNCH_IO 
+            OS_LDFLAGS += -lpthread
+            $(info using macOS libpthread: $(call find_include,pthread))
+          endif
         endif
       endif
       LIBEXT = $(LIBEXTSAVE)
@@ -543,6 +574,11 @@ ifeq (${WIN32},)  #*nix Environments (&& cygwin)
           OS_CCDEFS += -DHAVE_DLOPEN=${LIBEXT}
           OS_LDFLAGS += -ldld
           $(info using libdld: $(call find_lib,dld) $(call find_include,dlfcn))
+        else
+          ifeq (Darwin,$(OSTYPE))
+            OS_CCDEFS += -DHAVE_DLOPEN=dylib
+            $(info using macOS dlopen with .dylib)
+          endif
         endif
       endif
     endif
@@ -619,19 +655,29 @@ ifeq (${WIN32},)  #*nix Environments (&& cygwin)
     endif
     ifeq (,$(findstring HAVE_LIBSDL,$(VIDEO_CCDEFS)))
       $(info *** Info ***)
-      $(info *** Info *** The simulator$(BUILD_MULTIPLE) you are building could provide more)
-      $(info *** Info *** functionality if video support were available on your system.)
+      $(info *** Info *** The simulator$(BUILD_MULTIPLE) you are building could provide more functionality)
+      $(info *** Info *** if video support was available on your system.)
+      $(info *** Info *** To gain this functionality:)
       ifeq (Darwin,$(OSTYPE))
-        $(info *** Info *** Install the MacPorts libSDL2 package to provide this)
-        $(info *** Info *** functionality for your OS X system:)
-        $(info *** Info ***       # port install libsdl2 libpng zlib)
+        ifeq (/opt/local/bin/port,$(shell which port))
+          $(info *** Info *** Install the MacPorts libSDL2 package to provide this)
+          $(info *** Info *** functionality for your OS X system:)
+          $(info *** Info ***       # port install libsdl2 libpng zlib)
+        endif
         ifeq (/usr/local/bin/brew,$(shell which brew))
-          $(info *** Info ***)
-          $(info *** Info *** OR)
-          $(info *** Info ***)
+          ifeq (/opt/local/bin/port,$(shell which port))
+            $(info *** Info ***)
+            $(info *** Info *** OR)
+            $(info *** Info ***)
+          endif
           $(info *** Info *** Install the HomeBrew libSDL2 package to provide this)
           $(info *** Info *** functionality for your OS X system:)
           $(info *** Info ***       $$ brew install sdl2 libpng zlib)
+        else
+          ifeq (,$(shell which port))
+            $(info *** Info *** Install MacPorts or HomeBrew and rerun this make for)
+            $(info *** Info *** specific advice)
+          endif
         endif
       else
         ifneq (,$(and $(findstring Linux,$(OSTYPE)),$(call find_exe,apt-get)))
@@ -703,7 +749,12 @@ ifeq (${WIN32},)  #*nix Environments (&& cygwin)
           NETWORK_FEATURES = - static networking support using $(OSNAME) provided libpcap components
           $(info using libpcap: $(call find_lib,$(PCAPLIB)) $(call find_include,pcap))
         endif
-        LIBEXT = $(LIBEXTSAVE)        
+        LIBEXT = $(LIBEXTSAVE)
+        ifeq (Darwin,$(OSTYPE)$(findstring USE_,$(NETWORK_CCDEFS)))
+          NETWORK_CCDEFS += -DUSE_SHARED
+          NETWORK_FEATURES = - dynamic networking support using $(OSNAME) provided libpcap components
+          $(info using macOS dynamic libpcap: $(call find_include,pcap))
+        endif
       endif
     else
       # On non-Linux platforms, we'll still try to provide deprecated support for libpcap in /usr/local
@@ -812,16 +863,25 @@ ifeq (${WIN32},)  #*nix Environments (&& cygwin)
         $(info *** Info ***)
         $(info *** Info *** To build simulator(s) with extended networking support you)
         ifeq (Darwin,$(OSTYPE))
-          $(info *** Info *** should install the MacPorts vde2 package to provide this)
-          $(info *** Info *** functionality for your OS X system:)
-          $(info *** Info ***       # port install vde2)
+          ifeq (/opt/local/bin/port,$(shell which port))
+            $(info *** Info *** should install the MacPorts vde2 package to provide this)
+            $(info *** Info *** functionality for your OS X system:)
+            $(info *** Info ***       # port install vde2)
+          endif
           ifeq (/usr/local/bin/brew,$(shell which brew))
-            $(info *** Info ***)
-            $(info *** Info *** OR)
-            $(info *** Info ***)
-            $(info *** Info *** Install the HomeBrew vde package to provide this)
+            ifeq (/opt/local/bin/port,$(shell which port))
+              $(info *** Info ***)
+              $(info *** Info *** OR)
+              $(info *** Info ***)
+            endif
+            $(info *** Info *** should install the HomeBrew vde package to provide this)
             $(info *** Info *** functionality for your OS X system:)
             $(info *** Info ***       $$ brew install vde)
+          else
+            ifeq (,$(shell which port))
+              $(info *** Info *** should install MacPorts or HomeBrew and rerun this make for)
+              $(info *** Info *** specific advice)
+            endif
           endif
         else
           ifneq (,$(and $(findstring Linux,$(OSTYPE)),$(call find_exe,apt-get)))
@@ -1676,6 +1736,7 @@ ALTAIRZ80 = ${ALTAIRZ80D}/altairz80_cpu.c ${ALTAIRZ80D}/altairz80_cpu_nommu.c \
 	${ALTAIRZ80D}/mfdc.c ${ALTAIRZ80D}/n8vem.c ${ALTAIRZ80D}/vfdhd.c \
 	${ALTAIRZ80D}/s100_disk1a.c ${ALTAIRZ80D}/s100_disk2.c ${ALTAIRZ80D}/s100_disk3.c \
 	${ALTAIRZ80D}/s100_fif.c ${ALTAIRZ80D}/s100_mdriveh.c \
+	${ALTAIRZ80D}/s100_icom.c \
 	${ALTAIRZ80D}/s100_jadedd.c \
 	${ALTAIRZ80D}/s100_mdsa.c \
 	${ALTAIRZ80D}/s100_mdsad.c ${ALTAIRZ80D}/s100_selchan.c \
@@ -1915,13 +1976,17 @@ ifneq (,$(BESM6_BUILD))
         $(info *** No SDL ttf support available.  BESM-6 video panel disabled.)
         $(info ***)
         ifeq (Darwin,$(OSTYPE))
-          $(info *** Info *** Install the MacPorts libSDL2-ttf development package to provide this)
-          $(info *** Info *** functionality for your OS X system:)
-          $(info *** Info ***       # port install libsdl2-ttf-dev)
+          ifeq (/opt/local/bin/port,$(shell which port))
+            $(info *** Info *** Install the MacPorts libSDL2-ttf development package to provide this)
+            $(info *** Info *** functionality for your OS X system:)
+            $(info *** Info ***       # port install libsdl2-ttf-dev)
+          endif
           ifeq (/usr/local/bin/brew,$(shell which brew))
-            $(info *** Info ***)
-            $(info *** Info *** OR)
-            $(info *** Info ***)
+            ifeq (/opt/local/bin/port,$(shell which port))
+              $(info *** Info ***)
+              $(info *** Info *** OR)
+              $(info *** Info ***)
+            endif
             $(info *** Info *** Install the HomeBrew sdl2_ttf package to provide this)
             $(info *** Info *** functionality for your OS X system:)
             $(info *** Info ***       $$ brew install sdl2_ttf)

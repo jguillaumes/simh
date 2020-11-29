@@ -708,7 +708,6 @@ static const char *sim_int_expect_description (DEVICE *dptr)
 return "Expect facility";
 }
 
-#define FLUSH_INTERVAL 30*1000000           /* Flush I/O buffers every 30 seconds */
 static UNIT sim_expect_unit = { UDATA (&expect_svc, 0, 0) };
 DEVICE sim_expect_dev = {
     "INT-EXPECT", &sim_expect_unit, NULL, NULL, 
@@ -720,12 +719,18 @@ DEVICE sim_expect_dev = {
 
 static const char *sim_int_flush_description (DEVICE *dptr)
 {
-return "Flush facility";
+return "Open File Flush facility";
 }
+
+static uint32 sim_flush_interval = 30;  /* Flush I/O buffers every 30 seconds */
+static REG sim_flush_reg[] = {
+    { DRDATAD(FLUSH_INTERVAL, sim_flush_interval, 32, "Periodic Buffer Flush Interval (seconds)") },
+    { NULL}
+    };
 
 static UNIT sim_flush_unit = { UDATA (&flush_svc, UNIT_IDLE, 0) };
 DEVICE sim_flush_dev = {
-    "INT-FLUSH", &sim_flush_unit, NULL, NULL, 
+    "INT-FLUSH", &sim_flush_unit, sim_flush_reg, NULL, 
     1, 0, 0, 0, 0, 0, 
     NULL, NULL, NULL, NULL, NULL, NULL, 
     NULL, DEV_NOSAVE, 0, 
@@ -1562,9 +1567,7 @@ static const char simh_help2[] =
       "+sh{ow} ethernet             show ethernet devices\n"
       "+sh{ow} serial               show serial devices\n"
       "+sh{ow} multiplexer {dev}    show open multiplexer device info\n"
-#if defined(USE_SIM_VIDEO)
       "+sh{ow} video                show video capabilities\n"
-#endif
       "+sh{ow} clocks               show calibrated timer information\n"
       "+sh{ow} throttle             show throttle info\n"
       "+sh{ow} on                   show on condition actions\n"
@@ -2411,7 +2414,7 @@ static const char simh_help2[] =
        /***************** 80 character line width template *************************/
 #define HLP_SCREENSHOT  "*Commands Screenshot_Video_Window"
       "2Screenshot Video Window\n"
-      " Simulators with Video devices display the simulated video in a window\n"
+      " Simulators with Video devices display the simulated video in a window(s)\n"
       " on the local system.  The contents of that display can be saved in a\n"
       " file with the SCREENSHOT command:\n\n"
       "++SCREENSHOT screenshotfile\n\n"
@@ -2467,7 +2470,7 @@ static const char simh_help2[] =
 #define HLP_CURL        "*Commands File_Tools Curl_Tool"
       "3Curl Tool\n"
       " curl is a utility to transfer a URL\n\n"
-      " The quick and dirty help for the TAR command can be viewed with:\n\n"
+      " The quick and dirty help for the CURL command can be viewed with:\n\n"
       "++sim> curl --help\n\n"
 #define HLP_DISKINFO    "*Commands DISKINFO"
       "2Disk Container Information\n"
@@ -2541,9 +2544,7 @@ static CTAB cmd_table[] = {
     { "SLEEP",      &sleep_cmd,     0,          HLP_SLEEP,      NULL, NULL },
     { "!",          &spawn_cmd,     0,          HLP_SPAWN,      NULL, NULL },
     { "HELP",       &help_cmd,      0,          HLP_HELP,       NULL, NULL },
-#if defined(USE_SIM_VIDEO)
     { "SCREENSHOT", &screenshot_cmd,0,          HLP_SCREENSHOT, NULL, NULL },
-#endif
     { "TAR",        &tar_cmd,       0,          HLP_TAR,        NULL, NULL },
     { "CURL",       &curl_cmd,      0,          HLP_CURL,       NULL, NULL },
     { "RUNLIMIT",   &runlimit_cmd,  1,          HLP_RUNLIMIT,   NULL, NULL },
@@ -2635,9 +2636,7 @@ static SHTAB show_glob_tab[] = {
     { "SERIAL",         &sim_show_serial,           0, HLP_SHOW_SERIAL },
     { "MULTIPLEXER",    &tmxr_show_open_devices,    0, HLP_SHOW_MULTIPLEXER },
     { "MUX",            &tmxr_show_open_devices,    0, HLP_SHOW_MULTIPLEXER },
-#if defined(USE_SIM_VIDEO)
     { "VIDEO",          &vid_show,                  0, HLP_SHOW_VIDEO },
-#endif
     { "CLOCKS",         &sim_show_timers,           0, HLP_SHOW_CLOCKS },
     { "SEND",           &sim_show_send,             0, HLP_SHOW_SEND },
     { "EXPECT",         &sim_show_expect,           0, HLP_SHOW_EXPECT },
@@ -2798,15 +2797,15 @@ if ((stat = sim_ttinit ()) != SCPE_OK) {
         sim_error_text (stat));
     if (sim_ttisatty())
         read_line_p ("Hit Return to exit: ", cbuf, sizeof (cbuf) - 1, stdin);
-    free (targv);
-    return EXIT_FAILURE;
+    sim_exit_status = EXIT_FAILURE;
+    goto cleanup_and_exit;
     }
 if ((sim_eval = (t_value *) calloc (sim_emax, sizeof (t_value))) == NULL) {
     fprintf (stderr, "Unable to allocate examine buffer\n");
     if (sim_ttisatty())
         read_line_p ("Hit Return to exit: ", cbuf, sizeof (cbuf) - 1, stdin);
-    free (targv);
-    return EXIT_FAILURE;
+    sim_exit_status = EXIT_FAILURE;
+    goto cleanup_and_exit;
     };
 if (sim_dflt_dev == NULL)                               /* if no default */
     sim_dflt_dev = sim_devices[0];
@@ -2815,8 +2814,8 @@ if ((stat = reset_all_p (0)) != SCPE_OK) {
         sim_failed_reset_dptr->name, sim_error_text (stat));
     if (sim_ttisatty())
         read_line_p ("Hit Return to exit: ", cbuf, sizeof (cbuf) - 1, stdin);
-    free (targv);
-    return EXIT_FAILURE;
+    sim_exit_status = EXIT_FAILURE;
+    goto cleanup_and_exit;
     }
 if (register_check) {
     /* This test is explicitly run after the above reset_all_p() so that any devices 
@@ -2826,13 +2825,13 @@ if (register_check) {
         sim_printf ("Simulator device register sanity check error\n");
         if (sim_ttisatty())
             read_line_p ("Hit Return to exit: ", cbuf, sizeof (cbuf) - 1, stdin);
-        free (targv);
-        return EXIT_FAILURE;
+        sim_exit_status = EXIT_FAILURE;
+        goto cleanup_and_exit;
         }
     sim_printf ("*** Good Registers in %s simulator.\n", sim_name);
     if (argc < 2) {                                 /* No remaining command arguments? */
-        free (targv);
-        return EXIT_SUCCESS;                        /* then we're done */
+        sim_exit_status = EXIT_SUCCESS;             /* then we're done */
+        goto cleanup_and_exit;
         }
     }
 if ((stat = sim_brk_init ()) != SCPE_OK) {
@@ -2840,8 +2839,8 @@ if ((stat = sim_brk_init ()) != SCPE_OK) {
         sim_error_text (stat));
     if (sim_ttisatty())
         read_line_p ("Hit Return to exit: ", cbuf, sizeof (cbuf) - 1, stdin);
-    free (targv);
-    return EXIT_FAILURE;
+    sim_exit_status = EXIT_FAILURE;
+    goto cleanup_and_exit;
     }
 /* always check for register definition problems */
 sim_sanity_check_register_declarations ();
@@ -2868,8 +2867,8 @@ if (cptr == NULL) {
     }
 else
     cptr2 = NULL;
-if (cptr && sizeof (nbuf) > strlen (cptr) + strlen ("/simh.ini") + 1) {
-    sprintf(nbuf, "\"%s%s%ssimh.ini\"", cptr2 ? cptr2 : "", cptr, strchr (cptr, '/') ? "/" : "\\");
+if (cptr && (sizeof (nbuf) > strlen (cptr) + strlen ("/simh.ini") + 3)) {
+    snprintf(nbuf, sizeof (nbuf), "\"%s%s%ssimh.ini\"", cptr2 ? cptr2 : "", cptr, strchr (cptr, '/') ? "/" : "\\");
     stat = do_cmd (-1, nbuf) & ~SCPE_NOMESSAGE;         /* simh.ini proc cmd file */
     }
 if (SCPE_BARE_STATUS(stat) == SCPE_OPENERR)
@@ -2902,11 +2901,13 @@ if (SCPE_BARE_STATUS(stat) == SCPE_OPENERR)             /* didn't exist/can't op
 if (SCPE_BARE_STATUS(stat) != SCPE_EXIT)
     process_stdin_commands (SCPE_BARE_STATUS(stat), argv, FALSE);
 
+cleanup_and_exit:
+
 detach_all (0, TRUE);                                   /* close files */
 sim_set_deboff (0, NULL);                               /* close debug */
 sim_set_logoff (0, NULL);                               /* close log */
 sim_set_notelnet (0, NULL);                             /* close Telnet */
-vid_close ();                                           /* close video */
+vid_close_all ();                                       /* close video */
 sim_ttclose ();                                         /* close console */
 AIO_CLEANUP;                                            /* Asynch I/O */
 sim_cleanup_sock ();                                    /* cleanup sockets */
@@ -2990,6 +2991,13 @@ while (stat != SCPE_EXIT) {                             /* in case exit */
         else
             if (stat >= SCPE_BASE)                      /* error? */
                 sim_printf ("%s\n", sim_error_text (stat));
+        }
+    if ((sim_on_check[sim_do_depth]) && 
+        (stat != SCPE_OK)) {
+        if ((stat <= SCPE_MAX_ERR) && sim_on_actions[sim_do_depth][stat])
+            sim_brk_setact (sim_on_actions[sim_do_depth][stat]);
+        else
+            sim_brk_setact (sim_on_actions[sim_do_depth][0]);
         }
     if (sim_vm_post != NULL)
         (*sim_vm_post) (TRUE);
@@ -3694,12 +3702,7 @@ t_stat screenshot_cmd (int32 flag, CONST char *cptr)
 {
 if ((cptr == NULL) || (strlen (cptr) == 0))
     return sim_messagef (SCPE_ARG, "Missing screen shot filename\n");
-#if defined (USE_SIM_VIDEO)
 return vid_screenshot (cptr);
-#else
-sim_printf ("No video device\n");
-return SCPE_UNK|SCPE_NOMESSAGE;
-#endif
 }
 
 /* Echo command */
@@ -4002,8 +4005,7 @@ do {
         stat = SCPE_OK;                                 /* so adjust it to SCPE_OK */
     if (staying &&
         (sim_on_check[sim_do_depth]) && 
-        (stat != SCPE_OK) &&
-        (stat != SCPE_STEP)) {
+        (stat != SCPE_OK)) {
         if ((stat <= SCPE_MAX_ERR) && sim_on_actions[sim_do_depth][stat])
             sim_brk_setact (sim_on_actions[sim_do_depth][stat]);
         else
@@ -8560,7 +8562,7 @@ tmxr_flush_log_files ();
 t_stat
 flush_svc (UNIT *uptr)
 {
-sim_activate_after (uptr, FLUSH_INTERVAL);
+sim_activate_after (uptr, sim_flush_interval * 1000000);
 sim_flush_buffered_files ();
 return SCPE_OK;
 }
@@ -8757,7 +8759,7 @@ if (signal (SIGTERM, int_handler) == SIG_ERR) {         /* set WRU */
     }
 if (sim_step)                                           /* set step timer */
     sim_sched_step ();
-sim_activate_after (&sim_flush_unit, FLUSH_INTERVAL);   /* Enable periodic buffer flushing */
+sim_activate_after (&sim_flush_unit, sim_flush_interval * 1000000);/* Enable periodic buffer flushing */
 stop_cpu = FALSE;
 sim_is_running = TRUE;                                  /* flag running */
 fflush(stdout);                                         /* flush stdout */
@@ -13258,16 +13260,30 @@ size_t debug_line_bufsize = 0;
 size_t debug_line_offset = 0;
 size_t debug_line_count = 0;
 
+static void _debug_fwrite_all (const char *buf, size_t len, FILE *f)
+{
+size_t len_written;
+
+while (len > 0) {
+    len_written = fwrite (buf, 1, len, f);
+    len -= len_written;
+    buf += len_written;
+    if (errno == EAGAIN)    /* Non blocking file descriptor buffer full? */
+        sim_os_ms_sleep(10);/* wait a bit to retry */
+    errno = 0;
+    }
+}
+
 static void _debug_fwrite (const char *buf, size_t len)
 {
 size_t move_size;
 
 if (sim_deb_buffer == NULL) {
-    fwrite (buf, 1, len, sim_deb);              /* output now. */
+    _debug_fwrite_all (buf, len, sim_deb);  /* output now. */
     return;
     }
 if ((sim_deb == stdout) && (!sim_is_running))
-    fwrite (buf, 1, len, stdout);               /* output now. */
+    _debug_fwrite_all (buf, len, stdout);   /* output now. */
 while (len > 0) {
     if (sim_debug_buffer_offset + len <= sim_deb_buffer_size)
         move_size = len;

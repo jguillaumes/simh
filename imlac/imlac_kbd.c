@@ -228,7 +228,7 @@ kbd_both (uint32 key)
     break;
   case SIM_KEY_F11:
     vid_set_fullscreen (!vid_is_fullscreen ());
-    break;
+    return 0;
   default:
     return 0;
   }
@@ -575,14 +575,14 @@ kbd_event (SIM_KEY_EVENT *ev)
 static t_stat
 kbd_reset (DEVICE *dptr)
 {
-#ifdef HAVE_LIBSDL
+#ifdef USE_DISPLAY
   vid_display_kb_event_process = NULL;
 #endif
   if (dptr->flags & DEV_DIS)
     return SCPE_OK;
 
   if (kbd_type == KBD_DISPLAY)
-#ifdef HAVE_LIBSDL
+#ifdef USE_DISPLAY
     vid_display_kb_event_process = kbd_event;
 #else
     ;

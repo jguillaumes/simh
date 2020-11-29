@@ -25,9 +25,7 @@
 */
 
 #include "imlac_defs.h"
-#ifdef HAVE_LIBSDL
 #include "display/display.h"
-#endif
 
 
 /* Debug */
@@ -62,15 +60,16 @@ static int rom_type = ROM_NONE;
 static int halt;
 uint16 memmask = 017777;
 
-static struct {
+typedef struct {
   uint16 PC;
   uint16 IR;
   uint16 MA;
   uint16 MB;
   uint16 AC;
   uint16 L;
-} *history = NULL;
-static uint32 history_i, history_j, history_m, history_n;
+} HISTORY;
+static HISTORY *history = NULL;
+static uint32 history_i, history_m, history_n;
 
 /* Function declaration. */
 static t_stat cpu_set_hist (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
@@ -496,7 +495,7 @@ cpu_set_hist (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
   if (r != SCPE_OK)
     return r;
 
-  history = calloc (x, sizeof (*history));
+  history = (HISTORY *)calloc (x, sizeof (*history));
   if (history == NULL)
     return SCPE_MEM;
 
@@ -667,7 +666,6 @@ rom_show_type (FILE *st, UNIT *up, int32 v, CONST void *dp)
   return SCPE_OK;
 }
 
-#ifdef HAVE_LIBSDL
 /* Called from display library to get data switches. */
 void
 cpu_get_switches (unsigned long *p1, unsigned long *p2)
@@ -682,4 +680,3 @@ cpu_set_switches (unsigned long p1, unsigned long p2)
 {
   DS = p1 & 0177777;
 }
-#endif /* HAVE_LIBSDL */
