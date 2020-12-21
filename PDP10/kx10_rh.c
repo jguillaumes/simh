@@ -183,7 +183,7 @@ t_stat rh_devio(uint32 dev, uint64 *data) {
      DEVICE        *dptr = NULL;
      struct rh_if  *rhc = NULL;
      int            drive;
-     uint32         drdat;
+     uint32         drdat = 0;
 
      for (drive = 0; rh[drive].dev_num != 0; drive++) {
         if (rh[drive].dev_num == (dev & 0774)) {

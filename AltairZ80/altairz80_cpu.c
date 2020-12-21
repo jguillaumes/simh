@@ -224,6 +224,7 @@ UNIT cpu_unit = {
         int32 DE1_S;                                /* alternate DE register                        */
         int32 HL1_S;                                /* alternate HL register                        */
         int32 IFF_S;                                /* Interrupt Flip Flop                          */
+        int32 IM_S;                                 /* Interrupt Mode register                      */
         int32 IR_S;                                 /* Interrupt (upper) / Refresh (lower) register */
         int32 AX_S;                                 /* AX register (8086)                           */
         int32 BX_S;                                 /* BX register (8086)                           */
@@ -242,6 +243,7 @@ UNIT cpu_unit = {
         int32 SR                = 0;                /* switch register                              */
 static  int32 bankSelect        = 0;                /* determines selected memory bank              */
 static  uint32 common           = 0xc000;           /* addresses >= 'common' are in common memory   */
+static  uint32 common_low       = 0;                /* Common area is in low memory                 */
 static  uint32 previousCapacity = MAXBANKSIZE;      /* safe for previous memory capacity            */
 static  uint32 clockFrequency   = 0;                /* in kHz, 0 means as fast as possible          */
 static  uint32 sliceLength      = 10;               /* length of time-slice for CPU speed           */
@@ -288,8 +290,8 @@ static  int32 switcherPort            = SWITCHCPU_DEFAULT;
 static  struct idev oldSwitcherDevice = { NULL, NULL };
 
 // CPU_INDEX_8080 is defined in altairz80_defs.h
-#define CPU_INDEX_8086  26
-#define CPU_INDEX_M68K  53
+#define CPU_INDEX_8086  27
+#define CPU_INDEX_M68K  54
 
 REG cpu_reg[] = {
     // 8080 and Z80 registers
@@ -308,163 +310,168 @@ REG cpu_reg[] = {
 
     // Z80 registers
     { HRDATAD (IX,      IX_S,               16, "Z80 IX register")
-    }, /*  8 */
-    { HRDATAD (IY,      IY_S,               16, "Z80 IY register")
-    }, /*  9 */
-    { HRDATAD (AF1,     AF1_S,              16, "Z80 Alternate Accumulator Flag register")
-    }, /* 10 */
-    { HRDATAD (BC1,     BC1_S,              16, "Z80 Alternate BC register")
-    }, /* 11 */
-    { HRDATAD (DE1,     DE1_S,              16, "Z80 Alternate DE register")
-    }, /* 12 */
-    { HRDATAD (HL1,     HL1_S,              16, "Z80 Alternate HL register")
-    }, /* 13 */
-    { GRDATAD (IFF,     IFF_S, 2, 2, 0,         "Z80 Interrupt Flip Flop register")
     }, /*  6 */
-    { HRDATAD (IR,      IR_S,               16, "Z80 Interrupt (upper) / Refresh (lower) register")
+    { HRDATAD (IY,      IY_S,               16, "Z80 IY register")
     }, /*  7 */
+    { HRDATAD (AF1,     AF1_S,              16, "Z80 Alternate Accumulator Flag register")
+    }, /*  8 */
+    { HRDATAD (BC1,     BC1_S,              16, "Z80 Alternate BC register")
+    }, /*  9 */
+    { HRDATAD (DE1,     DE1_S,              16, "Z80 Alternate DE register")
+    }, /* 10 */
+    { HRDATAD (HL1,     HL1_S,              16, "Z80 Alternate HL register")
+    }, /* 11 */
+    { GRDATAD (IFF,     IFF_S, 2, 2, 0,         "Z80 Interrupt Flip Flop register")
+    }, /* 12 */
+    { HRDATAD (IM,      IM_S,               2,  "Z80 Interrupt Mode register")
+    }, /* 13 */
+    { HRDATAD (IR,      IR_S,               16, "Z80 Interrupt (upper) / Refresh (lower) register")
+    }, /* 14 */
+
 
     // 8086 registers
     { HRDATAD (AX,      AX_S,               16, "8086 AX register")
-    }, /* 14 8086                       */
+    }, /* 15 8086                       */
     { GRDATAD (AL,      AX_S, 16,           8, 0, "8086 low bits of AX register")
-    }, /* 15 8086, low 8 bits of AX     */
+    }, /* 16 8086, low 8 bits of AX     */
     { GRDATAD (AH,      AX_S, 16,           8, 8, "8086 high bits of AX register")
-    }, /* 16 8086, high 8 bits of AX    */
+    }, /* 17 8086, high 8 bits of AX    */
     { HRDATAD (BX,      BX_S,               16, "8086 BX register")
-    }, /* 17 8086                       */
+    }, /* 18 8086                       */
     { GRDATAD (BL,      BX_S, 16,           8, 0, "8086 low bits of BX register")
-    }, /* 18 8086, low 8 bits of BX     */
+    }, /* 19 8086, low 8 bits of BX     */
     { GRDATAD (BH,      BX_S, 16,           8, 8, "8086 high bits of BX register")
-    }, /* 19 8086, high 8 bits of BX    */
+    }, /* 20 8086, high 8 bits of BX    */
     { HRDATAD (CX,      CX_S,               16, "8086 CX register")
-    }, /* 20 8086                       */
+    }, /* 21 8086                       */
     { GRDATAD (CL,      CX_S, 16,           8, 0, "8086 low bits of CX register")
-    }, /* 21 8086, low 8 bits of CX     */
+    }, /* 22 8086, low 8 bits of CX     */
     { GRDATAD (CH,      CX_S, 16,           8, 8, "8086 high bits of CX register")
-    }, /* 22 8086, high 8 bits of CX    */
+    }, /* 23 8086, high 8 bits of CX    */
     { HRDATAD (DX,      DX_S,               16, "8086 DX register")
-    }, /* 23 8086                       */
+    }, /* 24 8086                       */
     { GRDATAD (DL,      DX_S, 16,           8, 0, "8086 low bits of DX register")
-    }, /* 24 8086, low 8 bits of DX     */
+    }, /* 25 8086, low 8 bits of DX     */
     { GRDATAD (DH,      DX_S, 16,           8, 8, "8086 high bits of DX register")
-    }, /* 25 8086, high 8 bits of DX    */
+    }, /* 26 8086, high 8 bits of DX    */
     { HRDATAD (PCX,     PCX_S,              16 + MAXBANKSLOG2, "8086 Program Counter register")
-    }, /* 26 8086, Program Counter      */
+    }, /* 27 8086, Program Counter      */
     { HRDATAD (SPX,     SPX_S,              16, "8086 Stack Pointer register")
-    }, /* 27 8086, Stack Pointer        */
+    }, /* 28 8086, Stack Pointer        */
     { HRDATAD (BP,      BP_S,               16, "8086 Base Pointer register")
-    }, /* 28 8086, Base Pointer         */
+    }, /* 29 8086, Base Pointer         */
     { HRDATAD (SI,      SI_S,               16, "8086 Source Index register")
-    }, /* 29 8086, Source Index         */
+    }, /* 30 8086, Source Index         */
     { HRDATAD (DI,      DI_S,               16, "8086 Destination Index register")
-    }, /* 30 8086, Destination Index    */
+    }, /* 31 8086, Destination Index    */
     { HRDATAD (CS,      CS_S,               16, "8086 Code Segment register")
-    }, /* 31 8086, Code Segment         */
+    }, /* 32 8086, Code Segment         */
     { HRDATAD (DS,      DS_S,               16, "8086 Data Segment register")
-    }, /* 32 8086, Data Segment         */
+    }, /* 33 8086, Data Segment         */
     { HRDATAD (ES,      ES_S,               16, "8086 Extra Segment register")
-    }, /* 33 8086, Extra Segment        */
+    }, /* 34 8086, Extra Segment        */
     { HRDATAD (SS,      SS_S,               16, "8086 Stack Segment register")
-    }, /* 34 8086, Stack Segment        */
+    }, /* 35 8086, Stack Segment        */
     { HRDATAD (FLAGS,   FLAGS_S,            16, "8086 Flag register")
-    }, /* 35 8086, FLAGS                */
+    }, /* 36 8086, FLAGS                */
     { HRDATAD (IP,      IP_S,               16, "8086 Instruction Pointer register"),
-        REG_RO          }, /* 36 8086, set via PC           */
+        REG_RO          }, /* 37 8086, set via PC           */
 
     // M68K registers
     { HRDATAD (M68K_D0,         m68k_registers[M68K_REG_D0],        32, "M68K D0 register"),
-    }, /* 37 M68K, D0                   */
+    }, /* 38 M68K, D0                   */
     { HRDATAD (M68K_D1,         m68k_registers[M68K_REG_D1],        32, "M68K D1 register"),
-    }, /* 38 M68K, D1                   */
+    }, /* 39 M68K, D1                   */
     { HRDATAD (M68K_D2,         m68k_registers[M68K_REG_D2],        32, "M68K D2 register"),
-    }, /* 39 M68K, D2                   */
+    }, /* 40 M68K, D2                   */
     { HRDATAD (M68K_D3,         m68k_registers[M68K_REG_D3],        32, "M68K D3 register"),
-    }, /* 40 M68K, D3                   */
+    }, /* 41 M68K, D3                   */
     { HRDATAD (M68K_D4,         m68k_registers[M68K_REG_D4],        32, "M68K D4 register"),
-    }, /* 41 M68K, D4                   */
+    }, /* 42 M68K, D4                   */
     { HRDATAD (M68K_D5,         m68k_registers[M68K_REG_D5],        32, "M68K D5 register"),
-    }, /* 42 M68K, D5                   */
+    }, /* 43 M68K, D5                   */
     { HRDATAD (M68K_D6,         m68k_registers[M68K_REG_D6],        32, "M68K D6 register"),
-    }, /* 43 M68K, D6                   */
+    }, /* 44 M68K, D6                   */
     { HRDATAD (M68K_D7,         m68k_registers[M68K_REG_D7],        32, "M68K D7 register"),
-    }, /* 44 M68K, D7                   */
+    }, /* 45 M68K, D7                   */
     { HRDATAD (M68K_A0,         m68k_registers[M68K_REG_A0],        32, "M68K A0 register"),
-    }, /* 45 M68K, A0                   */
+    }, /* 46 M68K, A0                   */
     { HRDATAD (M68K_A1,         m68k_registers[M68K_REG_A1],        32, "M68K A1 register"),
-    }, /* 46 M68K, A1                   */
+    }, /* 47 M68K, A1                   */
     { HRDATAD (M68K_A2,         m68k_registers[M68K_REG_A2],        32, "M68K A2 register"),
-    }, /* 47 M68K, A2                   */
+    }, /* 48 M68K, A2                   */
     { HRDATAD (M68K_A3,         m68k_registers[M68K_REG_A3],        32, "M68K A3 register"),
-    }, /* 48 M68K, A3                   */
+    }, /* 49 M68K, A3                   */
     { HRDATAD (M68K_A4,         m68k_registers[M68K_REG_A4],        32, "M68K A4 register"),
-    }, /* 49 M68K, A4                   */
+    }, /* 50 M68K, A4                   */
     { HRDATAD (M68K_A5,         m68k_registers[M68K_REG_A5],        32, "M68K A5 register"),
-    }, /* 50 M68K, A5                   */
+    }, /* 51 M68K, A5                   */
     { HRDATAD (M68K_A6,         m68k_registers[M68K_REG_A6],        32, "M68K A6 register"),
-    }, /* 51 M68K, A6                   */
+    }, /* 52 M68K, A6                   */
     { HRDATAD (M68K_A7,         m68k_registers[M68K_REG_A7],        32, "M68K A7 register"),
-    }, /* 52 M68K, A7                   */
+    }, /* 53 M68K, A7                   */
     { HRDATAD (M68K_PC,         m68k_registers[M68K_REG_PC],        32, "M68K Program Counter register"),
-    }, /* 53 M68K, PC                   */
+    }, /* 54 M68K, PC                   */
     { HRDATAD (M68K_SR,         m68k_registers[M68K_REG_SR],        32, "M68K Status Register"),
-    }, /* 54 M68K, SR                   */
+    }, /* 55 M68K, SR                   */
     { HRDATAD (M68K_SP,         m68k_registers[M68K_REG_SP],        32, "M68K Stack Pointer register"),
-    }, /* 55 M68K, SP                   */
+    }, /* 56 M68K, SP                   */
     { HRDATAD (M68K_USP,        m68k_registers[M68K_REG_USP],       32, "M68K User Stack Pointer register"),
-    }, /* 56 M68K, USP                  */
+    }, /* 57 M68K, USP                  */
     { HRDATAD (M68K_ISP,        m68k_registers[M68K_REG_ISP],       32, "M68K Interrupt Stack Pointer register"),
-    }, /* 57 M68K, ISP                  */
+    }, /* 58 M68K, ISP                  */
     { HRDATAD (M68K_MSP,        m68k_registers[M68K_REG_MSP],       32, "M68K Master Stack Pointer register"),
-    }, /* 58 M68K, MSP                  */
+    }, /* 59 M68K, MSP                  */
     { HRDATAD (M68K_SFC,        m68k_registers[M68K_REG_SFC],       32, "M68K Source Function Code register"),
-    }, /* 59 M68K, SFC                  */
+    }, /* 60 M68K, SFC                  */
     { HRDATAD (M68K_DFC,        m68k_registers[M68K_REG_DFC],       32, "M68K Destination Function Code register"),
-    }, /* 60 M68K, DFC                  */
+    }, /* 61 M68K, DFC                  */
     { HRDATAD (M68K_VBR,        m68k_registers[M68K_REG_VBR],       32, "M68K Vector Base Register"),
-    }, /* 61 M68K, VBR                  */
+    }, /* 62 M68K, VBR                  */
     { HRDATAD (M68K_CACR,       m68k_registers[M68K_REG_CACR],      32, "M68K Cache Control Register"),
-    }, /* 62 M68K, CACR                 */
+    }, /* 63 M68K, CACR                 */
     { HRDATAD (M68K_CAAR,       m68k_registers[M68K_REG_CAAR],      32, "M68K Cache Address Register"),
-    }, /* 63 M68K, CAAR                 */
+    }, /* 64 M68K, CAAR                 */
     { HRDATAD (M68K_PREF_ADDR,  m68k_registers[M68K_REG_PREF_ADDR], 32, "M68K Last Prefetch Address register"),
-    }, /* 64 M68K, PREF_ADDR            */
+    }, /* 65 M68K, PREF_ADDR            */
     { HRDATAD (M68K_PREF_DATA,  m68k_registers[M68K_REG_PREF_DATA], 32, "M68K Last Prefetch Data register"),
-    }, /* 65 M68K, PREF_DATA            */
+    }, /* 66 M68K, PREF_DATA            */
     { HRDATAD (M68K_PPC,         m68k_registers[M68K_REG_PPC],      32, "M68K Previous Proram Counter register"),
-    }, /* 66 M68K, PPC                  */
+    }, /* 67 M68K, PPC                  */
     { HRDATAD (M68K_IR,          m68k_registers[M68K_REG_IR],       32, "M68K Instruction Register"),
-    }, /* 67 M68K, IR                   */
+    }, /* 68 M68K, IR                   */
     { HRDATAD (M68K_CPU_TYPE,    m68k_registers[M68K_REG_CPU_TYPE], 32, "M68K CPU Type register"),
-        REG_RO }, /* 68 M68K, CPU_TYPE             */
+        REG_RO }, /* 69 M68K, CPU_TYPE             */
 
     // Pseudo registers
     { FLDATAD (OPSTOP,  cpu_unit.flags,     UNIT_CPU_V_OPSTOP, "Stop on invalid operation pseudo register"),
-        REG_HRO         }, /* 69 */
+        REG_HRO         }, /* 70 */
     { HRDATAD (SR,      SR,                 8, "Front panel switches pseudo register"),
-    }, /* 70 */
-    { HRDATAD (BANK,    bankSelect,         MAXBANKSLOG2, "Active bank pseudo register"),
     }, /* 71 */
-    { HRDATAD (COMMON,  common,             32, "Starting address of common memory pseudo register"),
+    { HRDATAD (BANK,    bankSelect,         MAXBANKSLOG2, "Active bank pseudo register"),
     }, /* 72 */
-    { HRDATAD (SWITCHERPORT, switcherPort,  8, "I/O port for CPU switcher pseudo register"),
+    { HRDATAD (COMMON,  common,             32, "Starting address of common memory pseudo register"),
     }, /* 73 */
-    { DRDATAD (CLOCK,   clockFrequency,     32, "Clock frequency in kHz for 8080 / Z80 pseudo register"),
+    { HRDATAD (SWITCHERPORT, switcherPort,  8, "I/O port for CPU switcher pseudo register"),
     }, /* 74 */
-    { DRDATAD (SLICE,   sliceLength,        16, "Length of time slice for 8080 / Z80 pseudo register"),
+    { DRDATAD (CLOCK,   clockFrequency,     32, "Clock frequency in kHz for 8080 / Z80 pseudo register"),
     }, /* 75 */
+    { DRDATAD (SLICE,   sliceLength,        16, "Length of time slice for 8080 / Z80 pseudo register"),
+    }, /* 76 */
     { DRDATAD (TSTATES, executedTStates,    32, "Executed t-states for 8080 / Z80 pseudo register"),
-        REG_RO              }, /* 76 */
-    { HRDATAD (CAPACITY,cpu_unit.capac,     32, "Size of RAM pseudo register"),
         REG_RO              }, /* 77 */
-    { HRDATAD (PREVCAP, previousCapacity,   32, "Previous size of RAM pseudo register"),
+    { HRDATAD (CAPACITY,cpu_unit.capac,     32, "Size of RAM pseudo register"),
         REG_RO              }, /* 78 */
+    { HRDATAD (PREVCAP, previousCapacity,   32, "Previous size of RAM pseudo register"),
+        REG_RO              }, /* 79 */
     { BRDATAD (PCQ,     pcq, 16, 16,        PCQ_SIZE, "Program counter circular buffer for 8080 /Z80 pseudo register"),
-        REG_RO + REG_CIRC   }, /* 79 */
+        REG_RO + REG_CIRC   }, /* 80 */
     { DRDATAD (PCQP,    pcq_p, PCQ_SIZE_LOG2, "Circular buffer head for 8080 / Z80 pseudo register"),
-        REG_HRO             }, /* 80 */
+        REG_HRO             }, /* 81 */
     { HRDATAD (WRU,     sim_int_char,       8, "Interrupt character pseudo register"),
-    }, /* 81 */
+    }, /* 82 */
+    { HRDATAD(COMMONLOW,common_low,         1, "If set, use low memory for common area"),
+    }, /* 83 */
     { NULL }
 };
 
@@ -521,6 +528,8 @@ static MTAB cpu_mod[] = {
         NULL, NULL, "Sets the RAM type to Vector RAM for 8080 / Z80 / 8086"    },
     { MTAB_XTD | MTAB_VDV,  3,                  NULL,           "CRAM",         &cpu_set_ramtype,
         NULL, NULL, "Sets the RAM type to Cromemco RAM for 8080 / Z80 / 8086"   },
+    { MTAB_XTD | MTAB_VDV,  4,                  NULL,           "B810",         &cpu_set_ramtype,
+        NULL, NULL, "Sets the RAM type AB Digital Design B810 8080 / Z80 / 8086"},
     { MTAB_VDV,             4,                  NULL,           "4KB",          &cpu_set_size,
         NULL, NULL, "Sets the RAM size to 4KB for 8080 / Z80 / 8086"        },
     { MTAB_VDV,             8,                  NULL,           "8KB",          &cpu_set_size,
@@ -649,8 +658,15 @@ const char* handlerNameForPort(const int32 port) {
     return dev_table[port & 0xff].name;
 }
 
-static int32 ramtype =  0;
-#define MAX_RAM_TYPE    3
+
+#define RAM_TYPE_AZ80   0       /* Altair-Z80 RAM card */
+#define RAM_TYPE_HRAM   1       /* North Start Horizon RAM card */
+#define RAM_TYPE_VRAM   2       /* Vector Graphic RAM card */
+#define RAM_TYPE_CRAM   3       /* Cromemco RAM card */
+#define RAM_TYPE_B810   4       /* AB Digital Design B810 RAM card */
+#define MAX_RAM_TYPE    RAM_TYPE_B810
+
+static int32 ramtype = RAM_TYPE_AZ80;
 
 ChipType chiptype = CHIP_TYPE_8080;
 
@@ -1787,7 +1803,7 @@ uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
     if (resource_type == RESOURCE_TYPE_MEMORY) {
         for (i = 0; i < (size >> LOG2PAGESIZE); i++) {
             addr = (baseaddr & 0xfff00) + (i << LOG2PAGESIZE);
-            if ((cpu_unit.flags & UNIT_CPU_BANKED) && (addr < common))
+            if ((cpu_unit.flags & UNIT_CPU_BANKED) && (((common_low == 0) && (addr < common)) || ((common_low == 1) && (addr >= common))))
                 addr |= bankSelect << MAXBANKSIZELOG2;
             page = addr >> LOG2PAGESIZE;
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
@@ -1835,8 +1851,9 @@ static void PutBYTE(register uint32 Addr, const register uint32 Value) {
     MDEV m;
 
     Addr &= ADDRMASK;   /* registers are NOT guaranteed to be always 16-bit values */
-    if ((cpu_unit.flags & UNIT_CPU_BANKED) && (Addr < common))
+    if ((cpu_unit.flags & UNIT_CPU_BANKED) && (((common_low == 0) && (Addr < common)) || ((common_low == 1) && (Addr >= common))))
         Addr |= bankSelect << MAXBANKSIZELOG2;
+
     m = mmu_table[Addr >> LOG2PAGESIZE];
 
     if (m.isRAM)
@@ -1878,7 +1895,7 @@ static uint32 GetBYTE(register uint32 Addr) {
     MDEV m;
 
     Addr &= ADDRMASK;   /* registers are NOT guaranteed to be always 16-bit values */
-    if ((cpu_unit.flags & UNIT_CPU_BANKED) && (Addr < common))
+    if ((cpu_unit.flags & UNIT_CPU_BANKED) && (((common_low == 0) && (Addr < common)) || ((common_low == 1) && (Addr >= common))))
         Addr |= bankSelect << MAXBANKSIZELOG2;
     m = mmu_table[Addr >> LOG2PAGESIZE];
 
@@ -2084,14 +2101,31 @@ static t_stat sim_instr_mmu (void) {
     register uint32 cbits;
     register uint32 op;
     register uint32 adr;
-    /*  tStates contains the number of t-states executed. One t-state is executed
-        in one microsecond on a 1MHz CPU. tStates is used for real-time simulations.    */
-    register uint32 tStates;
-    uint32 tStatesInSlice; /* number of t-states in 10 mSec time-slice */
+
+    /*  The clock frequency simulation works as follows:
+     For each 8080 or Z80 instruction one can determine the number of t-states
+     needed for its execution. One t-state is executed in one microsecond on a
+     1MHz CPU. The variable sliceLength defines a time interval of typically
+     10 ms. When the clock frequency (clockFrequency) is known one can compute
+     the number of t-states which need to be completed in this slice:
+     tStatesInSlice = sliceLength * clockFrequency. The variable tStates counts
+     how many t-states have already been completed. startTime is initialized
+     with the current time when tStates is 0 at the beginning.
+
+     Periodically there is a check whether tStates >= tStatesInSlice.
+     If this is true case three things happen:
+
+     1. startTime is incremented by sliceLength giving the new expected current time.
+     2. tStates is decremented by tStatesInSlice.
+     3. In case startTime is in the future there is a sleep until startTime
+        is equal to the current time.
+     */
+    register uint32 tStates;    /* number of t-states executed in the current time-slice */
+    uint32 tStatesInSlice;      /* number of t-states in a 10 mSec time-slice */
     uint32 startTime, now;
     int32 tStateModifier = FALSE;
 
-    switch_cpu_now = TRUE; /* hharte */
+    switch_cpu_now = TRUE;
 
     AF = AF_S;
     BC = BC_S;
@@ -2127,11 +2161,13 @@ static t_stat sim_instr_mmu (void) {
         }
 
         if (specialProcessing) { /* quick check for special processing */
+
+            /* check for CPU clock frequency simulation + enough t-states executed */
             if (clockFrequency && (tStates >= tStatesInSlice)) {
                 /* clockFrequency != 0 implies that real time clock is available */
-                startTime += sliceLength;
-                tStates -= tStatesInSlice;
-                if (startTime > (now = sim_os_msec()))
+                startTime += sliceLength;   /* advance start time to new expected current time */
+                tStates -= tStatesInSlice;  /* reduce by t-states executed in a slice */
+                if (startTime > (now = sim_os_msec())) /* if expected time is in the future, sleep */
                     sim_os_ms_sleep(startTime - now);
             }
 
@@ -4755,6 +4791,7 @@ static t_stat sim_instr_mmu (void) {
                         break;
 
                     case 0x46:          /* IM 0 */
+                        IM_S = 0;
                         tStates += 8;   /* interrupt mode 0 */
                         break;
 
@@ -4837,6 +4874,7 @@ static t_stat sim_instr_mmu (void) {
                         break;
 
                     case 0x56:          /* IM 1 */
+                        IM_S = 1;
                         tStates += 8;   /* interrupt mode 1 */
                         break;
 
@@ -4876,6 +4914,7 @@ static t_stat sim_instr_mmu (void) {
                         break;
 
                     case 0x5e:          /* IM 2 */
+                        IM_S = 2;
                         tStates += 8;   /* interrupt mode 2 */
                         break;
 
@@ -6166,7 +6205,8 @@ static t_stat sim_instr_mmu (void) {
 
     /* simulation halted */
     PC_S = ((reason == STOP_OPCODE) || (reason == STOP_MEM)) ? PCX : (PC & ADDRMASK);
-    if ((cpu_unit.flags & UNIT_CPU_BANKED) && ((uint32)PC_S < common))
+    if ((cpu_unit.flags & UNIT_CPU_BANKED) && ((((common_low == 0) && ((uint32)PC_S < common))) || (((common_low == 1) && ((uint32)PC_S >= common)))))
+
         PC_S |= bankSelect << MAXBANKSIZELOG2;
     pcq_r -> qptr = pcq_p;  /* update pc q ptr */
     AF_S = AF;
@@ -6393,7 +6433,7 @@ const static CPUFLAG *cpuflags[NUM_CHIP_TYPE] = { cpuflags8080, cpuflagsZ80,
     cpuflags8086, cpuflagsM68K, };
 
 /* needs to be set for each ramtype <= MAX_RAM_TYPE */
-static const char *ramTypeToString[] = { "AZ80", "HRAM", "VRAM", "CRAM" };
+static const char *ramTypeToString[] = { "AZ80", "HRAM", "VRAM", "CRAM", "B810" };
 
 static t_stat chip_show(FILE *st, UNIT *uptr, int32 val, CONST void *desc) {
     fprintf(st, cpu_unit.flags & UNIT_CPU_OPSTOP ? "ITRAP, " : "NOITRAP, ");
@@ -6530,14 +6570,14 @@ static t_stat cpu_set_nonbanked(UNIT *uptr, int32 value, CONST char *cptr, void 
 static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
     if (io) {
         switch(ramtype) {
-            case 1:
+            case RAM_TYPE_HRAM:
                 if (data & 0x40) {
                     sim_printf("HRAM: Parity %s\n", data & 1 ? "ON" : "OFF");
                 } else {
                     sim_printf("HRAM BANKSEL=%02x\n", data);
                 }
                 break;
-            case 2:
+            case RAM_TYPE_VRAM:
 /*              sim_printf("VRAM BANKSEL=%02x\n", data);*/
                 switch(data & 0xFF) {
                     case 0x01:
@@ -6571,7 +6611,7 @@ static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
                         break;
                 }
                 break;
-            case 3:
+            case RAM_TYPE_CRAM:
 /*                sim_printf(ADDRESS_FORMAT " CRAM BANKSEL=%02x\n", PCX, data); */
                 switch(data & 0x7F) {
                     case 0x01:
@@ -6602,9 +6642,14 @@ static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
                         sim_printf("Invalid bank select 0x%02x for CRAM\n", data);
                         break;
                 }
-
+            case RAM_TYPE_B810:
+                if (data < 16) {
+                    setBankSelect(data);
+                } else {
+                    sim_printf("Invalid bank select 0x%02x for B810\n", data);
+                }
                 break;
-            case 0:
+            case RAM_TYPE_AZ80:
             default:
                 break;
         }
@@ -6727,19 +6772,24 @@ static t_stat cpu_set_ramtype(UNIT *uptr, int32 value, CONST char *cptr, void *d
     }
 
     switch(ramtype) {
-        case 1:
+        case RAM_TYPE_HRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Unmapping NorthStar HRAM\n");
             sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
             break;
-        case 2:
+        case RAM_TYPE_VRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Unmapping Vector RAM\n");
             sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
             break;
-        case 3:
+        case RAM_TYPE_CRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Unmapping Cromemco RAM\n");
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
+            break;
+        case RAM_TYPE_B810:
+            if (cpu_unit.flags & UNIT_CPU_VERBOSE)
+                sim_printf("Unmapping AB Digital Design B810 RAM\n");
             sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
             break;
         case 0:
@@ -6750,19 +6800,24 @@ static t_stat cpu_set_ramtype(UNIT *uptr, int32 value, CONST char *cptr, void *d
     }
 
     switch(value) {
-        case 1:
+        case RAM_TYPE_HRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("NorthStar HRAM Selected\n");
             sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
             break;
-        case 2:
+        case RAM_TYPE_VRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Vector RAM Selected\n");
             sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
             break;
-        case 3:
+        case RAM_TYPE_CRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Cromemco RAM Selected\n");
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
+            break;
+        case RAM_TYPE_B810:
+            if (cpu_unit.flags & UNIT_CPU_VERBOSE)
+                sim_printf("AB Digital Design B810 RAM Selected\n");
             sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
             break;
         case 0:
